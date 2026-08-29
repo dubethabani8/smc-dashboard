@@ -66,33 +66,87 @@ git remote add origin https://github.com/<you>/<repo>.git
 git push -u origin main
 ```
 
-## 4. Auto-deploy on Railway (recommended)
+## 4. Deploy for free on Fly.io
 
-Railway was picked over Vercel because this app holds a **persistent WebSocket
-connection** to Deriv and streams to the browser continuously — that needs a
-long-running server process, which serverless platforms like Vercel aren't built
-for. Railway runs your app as an always-on service and re-deploys automatically
-on every `git push`.
+**Why Fly.io over Railway/Render**: Railway's free tier is a one-time trial
+credit, not permanently free. Render's free tier is permanently free but
+**sleeps after 15 minutes of inactivity** and takes ~50s to wake up — bad for
+a chart meant to stream live continuously. Fly.io has a genuine small
+always-on free allowance with no forced sleep, which is the closest fit to
+"free but actually always-on" for an app holding a persistent WebSocket
+connection. One caveat: Fly requires a card on file even to stay within the
+free allowance (anti-abuse measure) — you won't be charged as long as you
+stay under the limit, but it's not literally card-free to sign up.
 
-1. Go to [railway.app](https://railway.app) → sign in with GitHub.
-2. **New Project → Deploy from GitHub repo** → pick this repo.
-3. Railway auto-detects Python via the root `requirements.txt` and uses the
-   `Procfile`'s start command — no extra config needed.
-4. Open the service → **Variables** tab → add:
-   - `DERIV_APP_ID` = your app_id from step 1
-5. **Settings → Networking → Generate Domain** to get a public URL
-   (`your-app.up.railway.app`).
-6. From now on, every `git push` to `main` redeploys automatically.
+### One-time setup
 
-Railway's free trial credit is enough to try this; a persistent WebSocket app
-like this one typically needs their ~$5/month Hobby plan for continuous uptime
-beyond the trial (their free tier has been known to sleep/limit long-lived
-services — check Railway's current pricing page, it does change).
+1. Install the Fly CLI (PowerShell):
+   ```powershell
+   iwr https://fly.io/install.ps1 -useb | iex
+   ```
+   Close and reopen your terminal after this so `fly` is on your PATH.
+2. Sign up / log in:
+   ```powershell
+   fly auth signup
+   # or, if you already have an account:
+   fly auth login
+   ```
 
-**Alternatives** if you'd rather not use Railway: **Render** (Web Service, not
-the free tier — free sleeps after inactivity, bad for a live chart) or **Fly.io**
-(more setup, but full control and cheap always-on VMs). The code doesn't change
-between any of these — only the deploy target does.
+### Deploy
+
+From the project root (`smc-dashboard`, the folder with `Dockerfile` and
+`fly.toml` in it):
+
+```powershell
+fly launch --no-deploy
+```
+- It'll detect the existing `fly.toml`/`Dockerfile` and mostly just ask you to
+  confirm — say **no** to adding a Postgres/Redis database, this app doesn't
+  use one.
+- Pick a region close to you (default `iad` = US East is fine to start, but
+  closer to Deriv's/your location may reduce latency).
+
+Set your Deriv App ID as a secret (this is the equivalent of the
+`DERIV_APP_ID` environment variable):
+```powershell
+fly secrets set DERIV_APP_ID=34eYt3MX5g02E8iqZlXmi
+```
+
+Then deploy:
+```powershell
+fly deploy
+```
+
+Once it finishes, open it:
+```powershell
+fly open
+```
+
+That gives you a public URL like `https://smc-dashboard.fly.dev`.
+
+### Redeploying after changes
+
+Fly.io doesn't auto-redeploy on `git push` the way Railway does — you deploy
+explicitly:
+```powershell
+fly deploy
+```
+This is a deliberate trade-off for staying on the free tier: Railway's
+auto-deploy-on-push convenience isn't available on Fly's free allowance in
+the same way. If auto-deploy-on-push matters more to you than staying fully
+free, Railway (paid Hobby plan, ~$5/mo) is the better fit — the same
+`Procfile`/`requirements.txt` in this repo work there too, no code changes
+needed, see the alternative instructions further below.
+
+### Checking on it / logs
+
+```powershell
+fly status       # is it running
+fly logs         # live logs, useful for debugging the Deriv connection
+```
+
+---
+
 
 ## Notes, limits, and what to build next
 
