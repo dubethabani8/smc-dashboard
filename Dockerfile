@@ -1,5 +1,8 @@
 FROM python:3.12-slim
 
+# Cache-buster: forces Railway to rebuild instead of reusing a stale image
+ARG CACHEBUST=1
+
 WORKDIR /app
 
 COPY requirements.txt .
