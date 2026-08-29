@@ -1,166 +1,103 @@
 # SMC Dashboard — live Smart Money Concepts chart for Deriv synthetic indices
 
-A live-updating trading chart for Deriv's Volatility/Boom/Crash/Step/Jump indices,
-with Smart Money Concepts overlays (swing highs/lows, BOS/CHoCH, Fair Value Gaps,
-Order Blocks, Liquidity) computed by the
-[`smartmoneyconcepts`](https://github.com/joshyattridge/smart-money-concepts) package,
-rendered with [lightweight-charts](https://github.com/tradingview/lightweight-charts).
+A live trading chart for Deriv's synthetic/volatility indices, with Smart
+Money Concepts overlays computed and updated in real time as new candles
+form: swing highs/lows, Break of Structure / Change of Character, Fair Value
+Gaps, Order Blocks, and Liquidity sweeps.
 
-Pick any synthetic index and any timeframe from the dropdowns in the top bar; the
-chart streams live and recomputes the overlays as new candles form.
-
-```
-backend/    FastAPI app: talks to Deriv over WebSocket, runs the SMC indicators,
-            streams candles + overlays to the browser over its own WebSocket.
-frontend/   Single-page dashboard (vanilla JS + lightweight-charts), served as
-            static files by the same FastAPI app - one deployable unit, one URL.
-```
-
-## 1. Get a Deriv `app_id` (5 minutes, uses your existing account)
-
-Deriv migrated their API in 2026 to a new platform at **developers.deriv.com**.
-App IDs there are alphanumeric strings (e.g. `34eYt3MX5g02E8iqZlXmi`), not the
-short numbers older Deriv docs still floating around the web show — that's
-expected, not a mistake.
-
-1. Go to **[developers.deriv.com](https://developers.deriv.com)** → **Dashboard**
-   → **Registered apps** → **Create new app**.
-2. Log in with the same account you already use for manual trading.
-3. Fill in the app registration form:
-   - **Name**: anything, e.g. `smc-dashboard`
-   - **Redirect URL**: required by the form but unused by this project (we
-     never trigger OAuth) — any placeholder works, e.g. your future deployed
-     URL or `https://example.com`.
-   - **Scopes**: leave minimal/read-only — this app never places trades.
-4. Submit — you'll get an **App ID** (the alphanumeric string) in the
-   **Registered Apps** table. That's the only value this project needs.
-
-Set it as the `DERIV_APP_ID` environment variable (see below).
-
-> This app never asks for or stores your API token/login. It only ever calls
-> Deriv's public, no-auth market-data endpoints (`active_symbols`,
-> `ticks_history`, `ohlc` subscription) on `wss://api.derivws.com/trading/v1/options/ws/public`,
-> identifying itself only via the `Deriv-App-ID` header.
-
-## 2. Run it locally first
-
-```bash
-cd backend
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-export DERIV_APP_ID=your_app_id_here
-uvicorn main:app --reload --port 8000
-```
-
-Open **http://localhost:8000** — you should see the symbol list populate and a
-live chart start streaming within a couple of seconds.
-
-## 3. Push to GitHub
-
-```bash
-git init
-git add .
-git commit -m "Initial SMC dashboard"
-git branch -M main
-git remote add origin https://github.com/<you>/<repo>.git
-git push -u origin main
-```
-
-## 4. Deploy for free on Fly.io
-
-**Why Fly.io over Railway/Render**: Railway's free tier is a one-time trial
-credit, not permanently free. Render's free tier is permanently free but
-**sleeps after 15 minutes of inactivity** and takes ~50s to wake up — bad for
-a chart meant to stream live continuously. Fly.io has a genuine small
-always-on free allowance with no forced sleep, which is the closest fit to
-"free but actually always-on" for an app holding a persistent WebSocket
-connection. One caveat: Fly requires a card on file even to stay within the
-free allowance (anti-abuse measure) — you won't be charged as long as you
-stay under the limit, but it's not literally card-free to sign up.
-
-### One-time setup
-
-1. Install the Fly CLI (PowerShell):
-   ```powershell
-   iwr https://fly.io/install.ps1 -useb | iex
-   ```
-   Close and reopen your terminal after this so `fly` is on your PATH.
-2. Sign up / log in:
-   ```powershell
-   fly auth signup
-   # or, if you already have an account:
-   fly auth login
-   ```
-
-### Deploy
-
-From the project root (`smc-dashboard`, the folder with `Dockerfile` and
-`fly.toml` in it):
-
-```powershell
-fly launch --no-deploy
-```
-- It'll detect the existing `fly.toml`/`Dockerfile` and mostly just ask you to
-  confirm — say **no** to adding a Postgres/Redis database, this app doesn't
-  use one.
-- Pick a region close to you (default `iad` = US East is fine to start, but
-  closer to Deriv's/your location may reduce latency).
-
-Set your Deriv App ID as a secret (this is the equivalent of the
-`DERIV_APP_ID` environment variable):
-```powershell
-fly secrets set DERIV_APP_ID=34eYt3MX5g02E8iqZlXmi
-```
-
-Then deploy:
-```powershell
-fly deploy
-```
-
-Once it finishes, open it:
-```powershell
-fly open
-```
-
-That gives you a public URL like `https://smc-dashboard.fly.dev`.
-
-### Redeploying after changes
-
-Fly.io doesn't auto-redeploy on `git push` the way Railway does — you deploy
-explicitly:
-```powershell
-fly deploy
-```
-This is a deliberate trade-off for staying on the free tier: Railway's
-auto-deploy-on-push convenience isn't available on Fly's free allowance in
-the same way. If auto-deploy-on-push matters more to you than staying fully
-free, Railway (paid Hobby plan, ~$5/mo) is the better fit — the same
-`Procfile`/`requirements.txt` in this repo work there too, no code changes
-needed, see the alternative instructions further below.
-
-### Checking on it / logs
-
-```powershell
-fly status       # is it running
-fly logs         # live logs, useful for debugging the Deriv connection
-```
+**Live URL:** _add your deployed link here once you have it_
 
 ---
 
+## Getting started
 
-## Notes, limits, and what to build next
+Open the dashboard in your browser. Within a couple of seconds it connects
+to Deriv and starts streaming — you'll see the symbol dropdown populate and
+a candlestick chart appear.
 
-- **No real volume**: Deriv's synthetic indices don't have real traded volume.
-  The Order Block "strength" score is computed from a synthesized activity proxy
-  (candle range/body size), not real order flow — treat it as relative, not
-  literal.
-- **Recompute cadence**: overlays recompute at most once per second as candles
-  update, to keep CPU usage sane; the candle itself still updates live every tick.
-- **Swing length / liquidity range %** are adjustable live from the top bar —
-  lower swing length = more (noisier) structure on lower timeframes; raise it on
-  higher timeframes.
-- **This is analysis support, not an execution bot** — it doesn't place trades.
-  Good next steps if you want to go further: alerts (Telegram/webhook) on new
-  BOS/CHoCH or liquidity sweeps, a multi-symbol watchlist view, or (bigger step)
-  wiring in Deriv's authenticated endpoints to place trades from signals — that
-  would need real risk controls and is a separate, more careful project.
+### Pick a market and timeframe
+
+- **Symbol dropdown** (top left) — choose any Deriv synthetic index: the
+  Volatility indices (10/25/50/75/100, including the 1-second variants),
+  Boom/Crash, Step Index, Jump indices, and similar. These trade **24/7**,
+  including weekends.
+- **Timeframe buttons** — 1m, 5m, 15m, 30m, 1h, 4h, 1d. Switching timeframe
+  reloads history and overlays for that granularity.
+- The current price sits top-right, colored green when the latest candle is
+  up, red when it's down. The status dot next to it turns green with
+  "live" once streaming is active for the selected symbol.
+
+> Some Deriv symbols track real markets (e.g. a Gold Basket) rather than
+> synthetics, and follow that market's actual trading hours — if you pick
+> one of those outside its market hours, you'll see historical data but no
+> live updates until it reopens. The pure synthetic/volatility indices don't
+> have this limitation.
+
+### Reading the chart
+
+| Overlay | What it means |
+|---|---|
+| **Swing H/L** (amber arrows) | Local swing highs and lows — the structural pivots everything else is built from. |
+| **BOS / CHoCH** (blue markers) | Break of Structure = price breaks a prior swing in the direction of the trend (continuation signal). Change of Character = price breaks the opposite way (possible reversal). |
+| **Fair Value Gaps** (teal/coral shaded boxes) | 3-candle imbalances the market often revisits. Solid fill = still open (unfilled); faded fill = already mitigated. |
+| **Order Blocks** (teal/coral bordered boxes) | Candle ranges flagged as likely institutional positioning before a strong move. Box opacity roughly tracks the block's relative strength. |
+| **Liquidity** (dashed amber lines, labeled "LQ") | Clusters of equal highs/lows where stop-losses tend to sit. Solid line = still active; faded + "LQ swept" = price has already run through it. |
+
+Bullish structures are teal, bearish are coral, throughout.
+
+### Adjusting sensitivity
+
+- **Swing** (top bar) — how many candles define a swing point. Lower =
+  more (noisier) structure, useful on lower timeframes. Higher = fewer,
+  cleaner structural points, better suited to higher timeframes.
+- **Liq %** — how close two highs/lows need to be (as a percentage) to
+  count as an equal-highs/lows liquidity cluster. Lower = stricter
+  (fewer, tighter clusters); higher = looser (more clusters detected).
+
+Both take effect immediately and reload the current symbol/timeframe.
+
+### The overlay legend (right sidebar)
+
+Each overlay has a checkbox to toggle it on/off, and shows a live count of
+how many are currently plotted on the chart. Turning overlays off is useful
+when the chart gets visually busy (e.g. a lot of Fair Value Gaps stacking up
+on a low timeframe) and you want to focus on just structure, or just
+liquidity, etc.
+
+---
+
+## Reading this responsibly
+
+A few things worth keeping in mind while using this as a trading aid:
+
+- **Order Block strength is a proxy, not real volume.** Deriv's synthetic
+  indices are algorithmically generated and have no real traded volume, so
+  the "strength" score behind each Order Block is derived from candle
+  range/body size as a stand-in — treat it as a relative signal, not a
+  literal measure of institutional order flow.
+- **This tool shows patterns, it doesn't recommend trades.** BOS, CHoCH,
+  FVGs, Order Blocks, and Liquidity sweeps are structural observations —
+  what other traders may act on, not a signal to buy or sell by itself.
+  How (or whether) to act on any of it is your call and your risk.
+- **It doesn't place trades.** This is purely a visual analysis aid running
+  alongside wherever you actually execute trades — it has no connection to
+  your Deriv trading account or funds.
+- **Higher timeframes are generally more reliable** for structure than very
+  low ones (1m especially) — lower timeframes produce more signals, but
+  also more noise.
+
+---
+
+## If something looks wrong
+
+- **Chart stuck / not updating**: check the status dot — if it's not green
+  and saying "live", the connection may have dropped. Refreshing the page
+  reconnects.
+- **A symbol shows old data with no live updates**: you likely picked a
+  real-market symbol (not a pure synthetic) outside its trading hours —
+  switch to a Volatility/Boom/Crash/Step/Jump index for 24/7 coverage.
+- **Overlay counts show 0 across the board**: try lowering the Swing value
+  — a very high setting on a short price history can suppress everything.
+
+For anything about how this is built, deployed, or modified, see
+`DEVELOPMENT.md` in this repo instead of this file.
