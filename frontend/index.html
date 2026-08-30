@@ -78,6 +78,46 @@
     position:absolute;bottom:16px;left:16px;background:var(--panel-2);border:1px solid var(--bear);
     color:var(--text);padding:10px 14px;border-radius:8px;font-size:12px;max-width:360px;display:none;
   }
+
+  /* ---- help button + modal ---- */
+  #helpBtn{
+    width:26px;height:26px;border-radius:50%;border:1px solid var(--line);background:var(--panel-2);
+    color:var(--text-dim);font-family:Inter,sans-serif;font-weight:700;font-size:13px;cursor:pointer;
+    flex-shrink:0;
+  }
+  #helpBtn:hover{border-color:var(--bull);color:var(--bull);}
+  #helpOverlay{
+    display:none;position:fixed;inset:0;background:rgba(4,6,9,0.72);z-index:50;
+    align-items:center;justify-content:center;padding:24px;
+  }
+  #helpOverlay.open{display:flex;}
+  #helpModal{
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    max-width:640px;width:100%;max-height:85vh;display:flex;flex-direction:column;
+    box-shadow:0 20px 60px rgba(0,0,0,0.5);
+  }
+  #helpHeader{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:16px 20px;border-bottom:1px solid var(--line);flex-shrink:0;
+  }
+  #helpHeader h2{margin:0;font-size:16px;color:var(--text);}
+  #helpClose{
+    background:transparent;border:none;color:var(--text-dim);font-size:22px;line-height:1;
+    cursor:pointer;padding:2px 6px;
+  }
+  #helpClose:hover{color:var(--text);}
+  #helpBody{padding:18px 22px;overflow-y:auto;font-size:13px;line-height:1.55;color:var(--text-dim);}
+  #helpBody section{margin-bottom:18px;}
+  #helpBody section:last-child{margin-bottom:0;}
+  #helpBody h3{
+    margin:0 0 6px;font-size:13px;color:var(--text);display:flex;align-items:center;gap:8px;
+  }
+  #helpBody p{margin:0 0 6px;}
+  #helpBody b{color:var(--text);}
+  .hdot{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
+  #helpDisclaimer{
+    padding-top:14px;border-top:1px solid var(--line);font-size:12px;
+  }
 </style>
 </head>
 <body>
@@ -90,6 +130,7 @@
     <div class="field"><label>Liq %</label><input type="number" id="rangePct" value="1.0" min="0.05" max="10" step="0.05"></div>
     <div id="lastPrice">—</div>
     <div id="status"><span id="statusDot"></span><span id="statusText">connecting…</span></div>
+    <button id="helpBtn" title="What does this all mean?">?</button>
   </div>
 
   <div id="main">
@@ -110,6 +151,81 @@
         Order-block strength uses a synthetic volume proxy (Deriv synthetics have no real order flow).
         This tool is analysis support, not trade automation — always manage your own risk.
       </div>
+    </div>
+  </div>
+</div>
+
+<div id="helpOverlay">
+  <div id="helpModal">
+    <div id="helpHeader">
+      <h2>How to read this chart</h2>
+      <button id="helpClose" title="Close">&times;</button>
+    </div>
+    <div id="helpBody">
+
+      <section>
+        <h3><span class="hdot" style="background:var(--amber)"></span>Swing Highs &amp; Lows</h3>
+        <p>The foundational pivot points everything else is built from. A
+        <b>swing high</b> (down arrow, above the candle) is a candle whose high
+        is the highest among several candles on either side of it. A
+        <b>swing low</b> (up arrow, below the candle) is the mirror opposite —
+        the lowest low among its neighbours. The <b>Swing</b> box in the top
+        bar controls how many neighbouring candles count: lower = more
+        (noisier) pivots, higher = fewer, cleaner ones.</p>
+      </section>
+
+      <section>
+        <h3><span class="hdot" style="background:#7aa2ff"></span>BOS / CHoCH</h3>
+        <p><b>Break of Structure (BOS)</b> — price breaks past a prior swing
+        point in the direction the trend was already moving. Read as
+        confirmation the current trend is continuing.</p>
+        <p><b>Change of Character (CHoCH)</b> — price breaks a prior swing
+        point in the <i>opposite</i> direction to the trend. Read as an early
+        warning the trend may be reversing.</p>
+      </section>
+
+      <section>
+        <h3><span class="hdot" style="background:var(--bull)"></span>Fair Value Gaps (FVG)</h3>
+        <p>A 3-candle imbalance — a gap between candle 1's high/low and
+        candle 3's low/high that candle 2 never traded through. Price often
+        revisits these gaps later ("fills" them). Solid-coloured box = still
+        open; faded box = already filled by a later candle.</p>
+      </section>
+
+      <section>
+        <h3><span class="hdot" style="background:var(--bear)"></span>Order Blocks</h3>
+        <p>A candle (or small range) flagged as likely institutional
+        positioning right before a strong move away from it. Box opacity
+        roughly tracks a "strength" score. <b>Note:</b> Deriv synthetic
+        indices have no real trading volume, so that score is calculated
+        from candle range/body size as a stand-in — treat it as a relative
+        signal, not literal order flow data.</p>
+      </section>
+
+      <section>
+        <h3><span class="hdot" style="background:var(--amber)"></span>Liquidity</h3>
+        <p>Clusters of roughly equal highs or lows — the kind of level where
+        many traders' stop-losses tend to cluster. Dashed line = still
+        active; faded line labeled "LQ swept" = price has already run
+        through it, which some traders read as a deliberate stop-hunt before
+        a reversal.</p>
+      </section>
+
+      <section>
+        <h3>Adjusting sensitivity</h3>
+        <p><b>Swing</b> — candles counted on each side of a point to call it
+        a swing high/low. <b>Liq %</b> — how close two highs/lows need to be
+        (as a percentage) to count as the same liquidity cluster: lower =
+        stricter, higher = looser.</p>
+      </section>
+
+      <section id="helpDisclaimer">
+        <p>This tool visualizes structure — it doesn't recommend trades,
+        and it has no connection to your Deriv account or funds. How (or
+        whether) to act on any pattern shown here is your call and your
+        risk.</p>
+      </section>
+
     </div>
   </div>
 </div>
@@ -334,6 +450,13 @@ function updateLastPrice(c){
   el.textContent = c.close.toFixed(c.close < 100 ? 4 : 2);
   el.style.color = c.close >= c.open ? 'var(--bull)' : 'var(--bear)';
 }
+
+// ---------- help modal ----------
+const helpOverlay = document.getElementById('helpOverlay');
+document.getElementById('helpBtn').addEventListener('click', ()=> helpOverlay.classList.add('open'));
+document.getElementById('helpClose').addEventListener('click', ()=> helpOverlay.classList.remove('open'));
+helpOverlay.addEventListener('click', (e)=>{ if(e.target === helpOverlay) helpOverlay.classList.remove('open'); });
+document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape') helpOverlay.classList.remove('open'); });
 
 loadSymbols();
 connectWS();
