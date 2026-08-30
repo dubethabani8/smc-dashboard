@@ -14,4 +14,7 @@ COPY frontend/ ./frontend/
 ENV PORT=8000
 EXPOSE 8000
 
-CMD ["sh", "-c", "uvicorn main:app --app-dir backend --host 0.0.0.0 --port ${PORT}"]
+# TEMPORARY DIAGNOSTIC: idle instead of crash-looping, so we can open a
+# Railway Console shell into a live container and inspect it directly.
+# Revert this once we've confirmed the real start command works.
+CMD ["sleep", "infinity"]
