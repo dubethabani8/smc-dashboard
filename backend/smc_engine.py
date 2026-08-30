@@ -1,12 +1,11 @@
 """
-Runs the smartmoneyconcepts indicators over an OHLC(V) DataFrame and converts
-the results into plain JSON structures the frontend chart can plot directly,
-keyed by UNIX epoch seconds (matching lightweight-charts' time format).
+Runs smartmoneyconcepts over an OHLC dataframe and turns the output into
+plain JSON the frontend can plot directly (epoch seconds, matches what
+lightweight-charts wants).
 
-Note: Deriv's synthetic indices have no real traded volume. We synthesize a
-volume proxy from candle range/body size so the order-block strength score
-(`Percentage`) still works - treat OB "volume" on this chart as a relative
-activity proxy, not literal order flow.
+No real volume on Deriv synthetics so the "volume" fed into the order block
+calc is just derived from candle range/body size - fine for a relative
+strength score, not literal order flow.
 """
 import pandas as pd
 from smartmoneyconcepts import smc

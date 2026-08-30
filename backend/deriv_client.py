@@ -1,12 +1,7 @@
 """
-Thin async wrapper around Deriv's current (2026) WebSocket API.
-Docs: https://developers.deriv.com/  (public market data endpoint:
-wss://api.derivws.com/trading/v1/options/ws/public)
-
-Deriv retired the old ws.derivws.com/websockets/v3 endpoint and numeric
-app_id in favour of this one. Market data (active_symbols, ticks_history,
-ohlc subscription) needs no OAuth/OTP - just your app's Deriv-App-ID sent
-as a header.
+Wraps Deriv's websocket API - just market data, no auth needed beyond the
+app_id header. Old ws.derivws.com/websockets/v3 endpoint is dead, this is
+the new one: wss://api.derivws.com/trading/v1/options/ws/public
 """
 import asyncio
 import itertools

@@ -27,7 +27,7 @@
   html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif;overflow:hidden;}
   #app{display:flex;flex-direction:column;height:100%;}
 
-  /* ---- topbar ---- */
+  /* top bar */
   #topbar{
     display:flex;align-items:center;gap:14px;
     padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line);
@@ -55,13 +55,13 @@
   #statusDot.live{background:var(--bull);box-shadow:0 0 8px var(--bull);}
   #lastPrice{font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;}
 
-  /* ---- main area ---- */
+  /* main area */
   #main{flex:1;position:relative;min-height:0;display:flex;}
   #chartWrap{flex:1;position:relative;}
   #chart{width:100%;height:100%;}
   #overlayCanvas{position:absolute;top:0;left:0;pointer-events:none;}
 
-  /* ---- legend / side panel ---- */
+  /* legend sidebar */
   #legend{
     width:190px;background:var(--panel);border-left:1px solid var(--line);
     padding:14px 12px;font-size:12px;overflow-y:auto;
@@ -79,7 +79,7 @@
     color:var(--text);padding:10px 14px;border-radius:8px;font-size:12px;max-width:360px;display:none;
   }
 
-  /* ---- help button + modal ---- */
+  /* help button + modal */
   #helpBtn{
     width:26px;height:26px;border-radius:50%;border:1px solid var(--line);background:var(--panel-2);
     color:var(--text-dim);font-family:Inter,sans-serif;font-weight:700;font-size:13px;cursor:pointer;
@@ -263,7 +263,7 @@ function resize(){
 new ResizeObserver(resize).observe(chartEl);
 chart.timeScale().subscribeVisibleLogicalRangeChange(drawOverlays);
 
-// ---------- overlay drawing (FVG / OB boxes + liquidity lines) on a canvas above the chart ----------
+// draws FVG/OB boxes + liquidity lines on a canvas overlaid on the chart
 function drawOverlays(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
   const ts = chart.timeScale();
@@ -355,7 +355,7 @@ function refreshCounts(){
   document.getElementById(id).addEventListener('change', ()=>{ applyMarkers(); drawOverlays(); });
 });
 
-// ---------- topbar wiring ----------
+// topbar wiring
 const tfGroup = document.getElementById('tfGroup');
 TIMEFRAMES.forEach(tf=>{
   const btn = document.createElement('button');
@@ -451,7 +451,7 @@ function updateLastPrice(c){
   el.style.color = c.close >= c.open ? 'var(--bull)' : 'var(--bear)';
 }
 
-// ---------- help modal ----------
+// help modal
 const helpOverlay = document.getElementById('helpOverlay');
 document.getElementById('helpBtn').addEventListener('click', ()=> helpOverlay.classList.add('open'));
 document.getElementById('helpClose').addEventListener('click', ()=> helpOverlay.classList.remove('open'));
