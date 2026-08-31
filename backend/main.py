@@ -12,12 +12,18 @@ from fastapi.staticfiles import StaticFiles
 
 import deriv_client
 import smc_engine
+import telegram_alerts
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("smc-dashboard")
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+@app.on_event("startup")
+async def _start_alert_watcher():
+    asyncio.create_task(telegram_alerts.run_alert_watcher())
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
