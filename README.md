@@ -6,6 +6,11 @@ zones. Updates as new candles come in, no refreshing needed.
 
 **Live:** https://web-production-e22932.up.railway.app
 
+**Get alerts on your phone:** message [@smc_dashboard_bot](https://t.me/smc_dashboard_bot)
+on Telegram and send `/start`. You'll get pinged whenever a new BOS, CHoCH,
+or liquidity sweep shows up on any synthetic index — not just whatever's
+open on the dashboard. Send `/stop` any time to unsubscribe.
+
 ## Using it
 
 Open it up, give it a couple seconds to connect, and the symbol list plus
@@ -57,9 +62,15 @@ live count of how many are plotted.
 
 ## Telegram alerts
 
-Message the bot `/start` and you'll get pinged for new BOS/CHoCH breaks and
-liquidity sweeps across every synthetic index, not just whatever's open on
-screen. `/stop` to unsubscribe.
+Message [@smc_dashboard_bot](https://t.me/smc_dashboard_bot) and send
+`/start` — you'll get a message every few minutes whenever new structure
+shows up (new BOS, CHoCH, or liquidity sweep) across the synthetic indices,
+batched into one digest rather than a flood of separate pings. `/stop` any
+time to unsubscribe.
+
+This runs independently of the dashboard itself — you don't need the
+website open to get alerts, and it's not tied to whichever symbol you
+happen to be looking at.
 
 ## Worth keeping in mind
 
