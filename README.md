@@ -63,17 +63,19 @@ live count of how many are plotted.
 ## Telegram alerts
 
 Message [@smc_dashboard_bot](https://t.me/smc_dashboard_bot) and send
-`/start` — you'll get a message every few minutes whenever new structure
-shows up (new BOS, CHoCH, or liquidity sweep) across the synthetic indices,
-batched into one digest rather than a flood of separate pings. `/stop` any
+`/start` — you'll get pinged the moment a new BOS, CHoCH, or liquidity sweep
+shows up on any synthetic index, checked on the 15m timeframe. `/stop` any
 time to unsubscribe.
 
 This runs independently of the dashboard itself — you don't need the
 website open to get alerts, and it's not tied to whichever symbol you
-happen to be looking at. Each alert includes the exact time (UTC) the
-pattern formed and a link that opens the dashboard straight to that symbol
-and timeframe, so you can go look at it immediately instead of hunting for
-it in the dropdown.
+happen to be looking at. Only fully-closed 15m candles are used, so nothing
+gets flagged prematurely on a candle that's still forming. Each alert goes
+out immediately (no batching or waiting around) and includes the exact time
+(UTC) plus a link that opens the dashboard straight to that symbol and
+timeframe — the chart auto-centers on the event and highlights it with a
+glowing marker, so you're looking at exactly the right spot immediately,
+not hunting for it.
 
 ## Worth keeping in mind
 

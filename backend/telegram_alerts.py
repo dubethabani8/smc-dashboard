@@ -16,10 +16,10 @@ log = logging.getLogger("smc-dashboard.alerts")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 ALERTS_ENABLED = bool(TELEGRAM_BOT_TOKEN)
 
-ALERT_GRANULARITY = int(os.getenv("ALERT_GRANULARITY", "300"))  # 5m default
+ALERT_GRANULARITY = int(os.getenv("ALERT_GRANULARITY", "900"))  # 15m default
 ALERT_SWING_LENGTH = int(os.getenv("ALERT_SWING_LENGTH", "10"))
 ALERT_RANGE_PERCENT = float(os.getenv("ALERT_RANGE_PERCENT", "0.01"))
-ALERT_POLL_INTERVAL = int(os.getenv("ALERT_POLL_INTERVAL", "300"))  # seconds between full symbol sweeps
+ALERT_POLL_INTERVAL = int(os.getenv("ALERT_POLL_INTERVAL", "900"))  # matches granularity - check once per candle close
 ALERT_HISTORY_COUNT = int(os.getenv("ALERT_HISTORY_COUNT", "300"))
 ALERT_STAGGER = 2.0  # seconds between checking each symbol, spreads load over the poll window
 
@@ -38,8 +38,11 @@ def _format_time(epoch: int) -> str:
     return datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
-def _chart_link(symbol: str) -> str:
-    return f"{DASHBOARD_URL}/?symbol={symbol}&timeframe={ALERT_TF_LABEL}"
+def _chart_link(symbol: str, event_type: str, direction: str, level: float, event_time: int) -> str:
+    return (
+        f"{DASHBOARD_URL}/?symbol={symbol}&timeframe={ALERT_TF_LABEL}"
+        f"&event={event_type}&dir={direction}&level={level}&time={event_time}"
+    )
 
 SUBSCRIBERS_FILE = Path(__file__).resolve().parent / "subscribers.json"
 ALERT_STATE_FILE = Path(__file__).resolve().parent / "alert_state.json"
@@ -142,25 +145,29 @@ async def send_telegram_message(text: str):
         await _send_to_chat(chat_id, text)
 
 
-async def _check_symbol(symbol: str, display_name: str) -> list[str]:
-    """Returns a list of formatted event lines for anything new - caller batches these into one digest."""
+async def _check_symbol(symbol: str, display_name: str):
+    """Checks one symbol and sends each new event immediately, as soon as it's found."""
     try:
-        candles = await deriv_client.fetch_candle_history(symbol, ALERT_GRANULARITY, ALERT_HISTORY_COUNT)
-        if len(candles) < 20:
-            return []
+        candles = await deriv_client.fetch_candle_history(symbol, ALERT_GRANULARITY, ALERT_HISTORY_COUNT + 1)
+        if len(candles) < 21:
+            return
+        # drop the last candle - it's still forming (in progress) at fetch time,
+        # so its high/low/close can still change. Only compute on fully-closed
+        # candles, otherwise a signal can "appear" then flip before the candle
+        # actually closes.
+        candles = candles[:-1]
         df = smc_engine.build_dataframe(candles)
         overlays = await asyncio.to_thread(
             smc_engine.compute_all, df, swing_length=ALERT_SWING_LENGTH, range_percent=ALERT_RANGE_PERCENT
         )
     except Exception:
         log.exception("alert check failed for %s", symbol)
-        return []
+        return
 
     first_pass = symbol not in _warmed_up
     seen_bc = _seen_bos_choch.setdefault(symbol, set())
     seen_lq = _seen_liquidity_swept.setdefault(symbol, set())
     name = display_name or symbol
-    lines: list[str] = []
 
     for item in overlays["bos_choch"]:
         key = (item["time"], item["kind"])
@@ -171,11 +178,12 @@ async def _check_symbol(symbol: str, display_name: str) -> list[str]:
             continue
         arrow = "\U0001F7E2" if item["direction"] == "bullish" else "\U0001F534"
         ts = _format_time(item["time"])
-        link = _chart_link(symbol)
-        lines.append(
+        link = _chart_link(symbol, item["kind"], item["direction"], item["level"], item["time"])
+        text = (
             f"{arrow} <b>{item['kind']}</b> ({item['direction']}) <b>{name}</b> @ {item['level']:.4f}\n"
             f"   {ts} \u00b7 <a href=\"{link}\">open {ALERT_TF_LABEL} chart</a>"
         )
+        await send_telegram_message(text)
 
     for item in overlays["liquidity"]:
         if not item.get("swept_time"):
@@ -188,11 +196,12 @@ async def _check_symbol(symbol: str, display_name: str) -> list[str]:
             continue
         arrow = "\U0001F7E2" if item["direction"] == "bullish" else "\U0001F534"
         ts = _format_time(item["swept_time"])
-        link = _chart_link(symbol)
-        lines.append(
+        link = _chart_link(symbol, "LIQUIDITY", item["direction"], item["level"], item["swept_time"])
+        text = (
             f"\U0001F4A7 Liquidity swept ({item['direction']}) <b>{name}</b> @ {item['level']:.4f}\n"
             f"   {ts} \u00b7 <a href=\"{link}\">open {ALERT_TF_LABEL} chart</a>"
         )
+        await send_telegram_message(text)
 
     # cap memory growth - only keep the most recent events per symbol
     if len(seen_bc) > 500:
@@ -202,11 +211,10 @@ async def _check_symbol(symbol: str, display_name: str) -> list[str]:
 
     _warmed_up.add(symbol)
     _save_alert_state()
-    return lines
 
 
 async def run_alert_watcher():
-    """Background loop: sweeps synthetic symbols on a timer, sends one digest message per sweep."""
+    """Background loop: sweeps synthetic symbols on a timer, alerts sent immediately as found."""
     if not ALERTS_ENABLED:
         log.info("Telegram alerts disabled (no TELEGRAM_BOT_TOKEN set)")
         return
@@ -214,8 +222,8 @@ async def run_alert_watcher():
     _load_subscribers()
     _load_alert_state()
     log.info(
-        "alert watcher starting, %d subscriber(s), symbol filter: %s",
-        len(_subscribers), ALERT_SYMBOL_FILTER or "all synthetic indices",
+        "alert watcher starting, %d subscriber(s), %s timeframe, symbol filter: %s",
+        len(_subscribers), ALERT_TF_LABEL, ALERT_SYMBOL_FILTER or "all synthetic indices",
     )
 
     while True:
@@ -230,15 +238,9 @@ async def run_alert_watcher():
             symbols = [s for s in symbols if s["symbol"] in ALERT_SYMBOL_FILTER]
 
         cycle_start = time.monotonic()
-        digest_lines: list[str] = []
         for s in symbols:
-            lines = await _check_symbol(s["symbol"], s.get("display_name", s["symbol"]))
-            digest_lines.extend(lines)
+            await _check_symbol(s["symbol"], s.get("display_name", s["symbol"]))
             await asyncio.sleep(ALERT_STAGGER)
-
-        if digest_lines:
-            header = f"<b>SMC alerts</b> ({len(digest_lines)} new)\n\n"
-            await send_telegram_message(header + "\n".join(digest_lines))
 
         elapsed = time.monotonic() - cycle_start
         remaining = max(0.0, ALERT_POLL_INTERVAL - elapsed)

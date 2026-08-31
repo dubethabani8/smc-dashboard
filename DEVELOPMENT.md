@@ -106,12 +106,23 @@ Push to main after that and it redeploys on its own.
 
 ## Telegram alerts
 
-Broadcasts BOS, CHoCH, and liquidity sweep events across synthetic symbols
-to whoever's subscribed. Anyone subscribes by messaging the bot `/start`,
-leaves with `/stop` - handled by `backend/telegram_alerts.py`, polling every
-`ALERT_POLL_INTERVAL` seconds (default 300s / 5min), one digest message per
-sweep rather than a message per event (30-50 symbols individually alerting
-gets unusable fast).
+Sends BOS, CHoCH, and liquidity sweep events across synthetic symbols to
+whoever's subscribed, immediately as each one's found - no batching. Anyone
+subscribes by messaging the bot `/start`, leaves with `/stop` - handled by
+`backend/telegram_alerts.py`, sweeping every `ALERT_POLL_INTERVAL` seconds
+(default 900s / 15min, matches the candle granularity so it checks right as
+each candle closes).
+
+Only fully-closed candles are used for the calc - the most recent candle
+returned by Deriv's API is still forming/in-progress at fetch time, so it
+gets dropped before computing. Otherwise a signal could show up then flip
+before that candle actually closes.
+
+Each alert carries a link back to the dashboard with the exact symbol,
+timeframe, and event details (`?symbol=...&timeframe=...&event=...&dir=...
+&level=...&time=...`) - the frontend reads these on load, centers the chart
+on that candle, and draws a glowing marker right on the spot so there's no
+hunting for what the alert was about.
 
 Env vars:
 - `TELEGRAM_BOT_TOKEN` - required to enable alerts at all, get one from @BotFather
@@ -119,9 +130,11 @@ Env vars:
 - `ALERT_SYMBOLS` - optional comma-separated Deriv symbol codes (e.g.
   `R_100,R_75,BOOM1000`) to restrict alerts to a specific watchlist instead
   of every synthetic index. Leave unset for everything.
-- `ALERT_GRANULARITY` - seconds, default 300 (5m). Alerts run on a fixed
+- `ALERT_GRANULARITY` - seconds, default 900 (15m). Alerts run on a fixed
   timeframe independent of whatever's open on the dashboard.
-- `ALERT_POLL_INTERVAL` - seconds between sweeps, default 300.
+- `ALERT_POLL_INTERVAL` - seconds between sweeps, default 900 (matches granularity).
+- `DASHBOARD_URL` - base URL used to build the deep-links in alerts, default
+  points at the current Railway URL.
 
 **Known limitations:**
 - Subscriber list and dedup state (`subscribers.json`, `alert_state.json`)

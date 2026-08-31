@@ -79,6 +79,20 @@
     color:var(--text);padding:10px 14px;border-radius:8px;font-size:12px;max-width:360px;display:none;
   }
 
+  #highlightBanner{
+    display:none;position:absolute;top:14px;left:50%;transform:translateX(-50%);
+    background:var(--panel-2);border:1px solid var(--amber);border-radius:8px;
+    padding:9px 14px;font-size:12px;color:var(--text);align-items:center;gap:10px;z-index:20;
+    box-shadow:0 6px 20px rgba(0,0,0,0.4);
+  }
+  #highlightBanner.show{display:flex;}
+  #highlightBanner b{color:var(--amber);}
+  #highlightBanner button{
+    background:transparent;border:none;color:var(--text-dim);font-size:16px;cursor:pointer;
+    line-height:1;padding:0 2px;
+  }
+  #highlightBanner button:hover{color:var(--text);}
+
   /* help button + modal */
   #helpBtn{
     width:26px;height:26px;border-radius:50%;border:1px solid var(--line);background:var(--panel-2);
@@ -138,6 +152,7 @@
       <div id="chart"></div>
       <canvas id="overlayCanvas"></canvas>
       <div id="toast"></div>
+      <div id="highlightBanner"></div>
     </div>
     <div id="legend">
       <h4>Overlays</h4>
@@ -238,6 +253,17 @@ const urlParams = new URLSearchParams(location.search);
 const presetSymbol = urlParams.get('symbol');
 const presetTF = urlParams.get('timeframe');
 
+// alert deep-link can also carry the exact event to highlight on load
+let alertHighlight = null;
+if (urlParams.get('event') && urlParams.get('level') && urlParams.get('time')) {
+  alertHighlight = {
+    type: urlParams.get('event'),           // 'BOS' | 'CHOCH' | 'LIQUIDITY'
+    direction: urlParams.get('dir') || 'bullish',
+    level: parseFloat(urlParams.get('level')),
+    time: parseInt(urlParams.get('time'), 10),
+  };
+}
+
 let currentTF = (presetTF && TIMEFRAMES.includes(presetTF)) ? presetTF : "5m";
 let currentSymbol = null;
 let overlays = { swings:[], bos_choch:[], fvg:[], order_blocks:[], liquidity:[] };
@@ -320,6 +346,36 @@ function drawOverlays(){
       ctx.setLineDash([]);
       ctx.fillStyle = 'rgba(242,193,78,0.85)';
       ctx.fillText(l.swept_time ? 'LQ swept' : 'LQ', x1+3, yy-3);
+    }
+  }
+
+  // alert deep-link highlight - drawn last so it's always on top
+  if(alertHighlight){
+    const hx = x(alertHighlight.time);
+    const hy = y(alertHighlight.level);
+    if(hx!=null && hy!=null){
+      const col = alertHighlight.direction==='bullish' ? '61,220,151' : '255,107,107';
+      // outer glow ring
+      ctx.beginPath();
+      ctx.arc(hx, hy, 14, 0, Math.PI*2);
+      ctx.strokeStyle = `rgba(${col},0.9)`;
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+      // inner solid dot
+      ctx.beginPath();
+      ctx.arc(hx, hy, 4, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(${col},1)`;
+      ctx.fill();
+      // full-width horizontal marker line at that price level
+      ctx.strokeStyle = `rgba(${col},0.5)`;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([6,4]);
+      ctx.beginPath(); ctx.moveTo(0,hy); ctx.lineTo(canvas.width,hy); ctx.stroke();
+      ctx.setLineDash([]);
+      // label
+      ctx.font = 'bold 11px "JetBrains Mono", monospace';
+      ctx.fillStyle = `rgba(${col},1)`;
+      ctx.fillText('\u2190 ' + alertHighlight.type, hx+18, hy+4);
     }
   }
 }
@@ -438,7 +494,11 @@ function connectWS(){
       candleTimes = bars.map(b=>b.time);
       overlays = msg.overlays;
       applyMarkers(); refreshCounts(); drawOverlays();
-      chart.timeScale().fitContent();
+      if(alertHighlight && candleTimes.length){
+        focusOnHighlight();
+      } else {
+        chart.timeScale().fitContent();
+      }
       if(bars.length) updateLastPrice(bars[bars.length-1]);
       setStatus(true, currentSymbol + ' · ' + currentTF + ' · live');
     } else if(msg.type === 'candle'){
@@ -460,6 +520,30 @@ function updateLastPrice(c){
   const el = document.getElementById('lastPrice');
   el.textContent = c.close.toFixed(c.close < 100 ? 4 : 2);
   el.style.color = c.close >= c.open ? 'var(--bull)' : 'var(--bear)';
+}
+
+// alert deep-link: center the chart on the highlighted event and show a banner
+function focusOnHighlight(){
+  const idx = candleTimes.findIndex(t => t >= alertHighlight.time);
+  const centerIdx = idx === -1 ? candleTimes.length - 1 : idx;
+  const pad = 25; // candles either side
+  chart.timeScale().setVisibleLogicalRange({
+    from: Math.max(0, centerIdx - pad),
+    to: Math.min(candleTimes.length - 1, centerIdx + pad),
+  });
+
+  const banner = document.getElementById('highlightBanner');
+  const dt = new Date(alertHighlight.time * 1000);
+  const dateStr = dt.toISOString().slice(0,16).replace('T',' ') + ' UTC';
+  banner.innerHTML =
+    `Highlighting <b>${alertHighlight.type}</b> (${alertHighlight.direction}) @ ${alertHighlight.level.toFixed(4)} · ${dateStr}` +
+    `<button id="highlightDismiss" title="Dismiss">&times;</button>`;
+  banner.classList.add('show');
+  document.getElementById('highlightDismiss').addEventListener('click', ()=>{
+    alertHighlight = null;
+    banner.classList.remove('show');
+    drawOverlays();
+  });
 }
 
 // help modal
