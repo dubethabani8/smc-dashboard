@@ -24,6 +24,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 @app.on_event("startup")
 async def _start_alert_watcher():
     asyncio.create_task(telegram_alerts.run_alert_watcher())
+    asyncio.create_task(telegram_alerts.run_command_listener())
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
@@ -84,7 +85,9 @@ async def _run_symbol_stream(ws: WebSocket, symbol: str, granularity: int, swing
     try:
         candles = await deriv_client.fetch_candle_history(symbol, granularity, HISTORY_COUNT)
         df = smc_engine.build_dataframe(candles)
-        overlays = smc_engine.compute_all(df, swing_length=swing_length, range_percent=range_percent)
+        overlays = await asyncio.to_thread(
+            smc_engine.compute_all, df, swing_length=swing_length, range_percent=range_percent
+        )
 
         await ws.send_json({
             "type": "history",
@@ -112,7 +115,9 @@ async def _run_symbol_stream(ws: WebSocket, symbol: str, granularity: int, swing
 
             loop_time = asyncio.get_event_loop().time()
             if loop_time - last_sent >= RECOMPUTE_MIN_INTERVAL:
-                overlays = smc_engine.compute_all(df, swing_length=swing_length, range_percent=range_percent)
+                overlays = await asyncio.to_thread(
+                    smc_engine.compute_all, df, swing_length=swing_length, range_percent=range_percent
+                )
                 await ws.send_json({"type": "overlays", "overlays": overlays})
                 last_sent = loop_time
     except asyncio.CancelledError:

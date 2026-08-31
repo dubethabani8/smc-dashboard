@@ -55,6 +55,12 @@ same cluster. Both apply instantly.
 Checkboxes to toggle each overlay off if the chart gets too busy, plus a
 live count of how many are plotted.
 
+## Telegram alerts
+
+Message the bot `/start` and you'll get pinged for new BOS/CHoCH breaks and
+liquidity sweeps across every synthetic index, not just whatever's open on
+screen. `/stop` to unsubscribe.
+
 ## Worth keeping in mind
 
 - Order block "strength" isn't real volume — Deriv synthetics don't have

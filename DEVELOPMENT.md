@@ -103,6 +103,41 @@ Push to main after that and it redeploys on its own.
 - Overlays recompute at most once a second as new candles stream in, just
   to keep CPU sane. Candle prices themselves still update every tick.
 - Swing length / liquidity % are adjustable live from the UI.
+
+## Telegram alerts
+
+Broadcasts BOS, CHoCH, and liquidity sweep events across synthetic symbols
+to whoever's subscribed. Anyone subscribes by messaging the bot `/start`,
+leaves with `/stop` - handled by `backend/telegram_alerts.py`, polling every
+`ALERT_POLL_INTERVAL` seconds (default 300s / 5min), one digest message per
+sweep rather than a message per event (30-50 symbols individually alerting
+gets unusable fast).
+
+Env vars:
+- `TELEGRAM_BOT_TOKEN` - required to enable alerts at all, get one from @BotFather
+- `TELEGRAM_CHAT_ID` - optional, auto-subscribes that one chat on top of whoever's used /start
+- `ALERT_SYMBOLS` - optional comma-separated Deriv symbol codes (e.g.
+  `R_100,R_75,BOOM1000`) to restrict alerts to a specific watchlist instead
+  of every synthetic index. Leave unset for everything.
+- `ALERT_GRANULARITY` - seconds, default 300 (5m). Alerts run on a fixed
+  timeframe independent of whatever's open on the dashboard.
+- `ALERT_POLL_INTERVAL` - seconds between sweeps, default 300.
+
+**Known limitations:**
+- Subscriber list and dedup state (`subscribers.json`, `alert_state.json`)
+  live on the container's local disk. This survives an in-process
+  crash/restart but **not** a fresh deploy - Railway rebuilds the container
+  from scratch each `git push`, wiping both files. So right after a deploy,
+  the first sweep is silently treated as a fresh baseline (no alerts), which
+  is fine, but subscribers do need to /start again after a redeploy wipes
+  the file. If this needs to survive redeploys properly, that means external
+  storage (a Railway volume, or a tiny hosted key-value store) instead of
+  local JSON files.
+- The heavy per-symbol computation runs via `asyncio.to_thread` so it
+  doesn't block the event loop (was previously causing the whole app to
+  become unresponsive to health checks and get restarted mid-sweep, which is
+  also what caused duplicate alerts before this was fixed - each restart
+  wiped in-memory dedup state and re-alerted the same still-recent events).
 - This doesn't place trades, purely visual. If I ever extend it further:
   alerts on new BOS/CHoCH or liquidity sweeps, multi-symbol watchlist, or
   (bigger undertaking) wiring in actual order placement - that last one

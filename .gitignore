@@ -4,3 +4,5 @@ __pycache__/
 .venv/
 venv/
 .DS_Store
+backend/subscribers.json
+backend/alert_state.json
