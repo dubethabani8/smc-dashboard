@@ -59,7 +59,7 @@
   #main{flex:1;position:relative;min-height:0;display:flex;}
   #chartWrap{flex:1;position:relative;}
   #chart{width:100%;height:100%;}
-  #overlayCanvas{position:absolute;top:0;left:0;pointer-events:none;}
+  #overlayCanvas{position:absolute;top:0;left:0;pointer-events:none;z-index:5;}
 
   /* legend sidebar */
   #legend{
@@ -272,16 +272,19 @@ function drawOverlays(){
   function x(time){ return ts.timeToCoordinate(time); }
   function y(price){ return candleSeries.priceToCoordinate(price); }
 
+  let fvgDrawn = 0, fvgSkipped = 0, obDrawn = 0, obSkipped = 0;
+
   if(document.getElementById('chk-fvg').checked){
     for(const g of overlays.fvg){
       const x1 = x(g.time);
       const x2 = x(g.mitigated_time || lastTime);
       const yTop = y(g.top), yBot = y(g.bottom);
-      if(x1==null||x2==null||yTop==null||yBot==null) continue;
+      if(x1==null||x2==null||yTop==null||yBot==null){ fvgSkipped++; continue; }
       const mitigated = !!g.mitigated_time;
       ctx.fillStyle = g.direction==='bullish' ? (mitigated?'rgba(61,220,151,0.07)':'rgba(61,220,151,0.20)')
                                                : (mitigated?'rgba(255,107,107,0.07)':'rgba(255,107,107,0.20)');
       ctx.fillRect(x1, Math.min(yTop,yBot), Math.max(x2-x1,1), Math.abs(yBot-yTop));
+      fvgDrawn++;
     }
   }
   if(document.getElementById('chk-ob').checked){
@@ -289,7 +292,7 @@ function drawOverlays(){
       const x1 = x(b.time);
       const x2 = x(b.mitigated_time || lastTime);
       const yTop = y(b.top), yBot = y(b.bottom);
-      if(x1==null||x2==null||yTop==null||yBot==null) continue;
+      if(x1==null||x2==null||yTop==null||yBot==null){ obSkipped++; continue; }
       const mitigated = !!b.mitigated_time;
       const col = b.direction==='bullish' ? [61,220,151] : [255,107,107];
       const alpha = mitigated ? 0.08 : Math.min(0.12 + b.strength_pct/300, 0.45);
@@ -299,7 +302,15 @@ function drawOverlays(){
       const rw = Math.max(x2-x1,1), rh = Math.abs(yBot-yTop);
       ctx.fillRect(x1, Math.min(yTop,yBot), rw, rh);
       ctx.strokeRect(x1, Math.min(yTop,yBot), rw, rh);
+      obDrawn++;
     }
+  }
+  if(!drawOverlays._logged || drawOverlays._lastCount !== overlays.fvg.length + overlays.order_blocks.length){
+    console.debug('[overlay debug] fvg drawn:', fvgDrawn, 'skipped:', fvgSkipped,
+                  '| ob drawn:', obDrawn, 'skipped:', obSkipped,
+                  '| canvas size:', canvas.width, 'x', canvas.height);
+    drawOverlays._logged = true;
+    drawOverlays._lastCount = overlays.fvg.length + overlays.order_blocks.length;
   }
   if(document.getElementById('chk-liq').checked){
     ctx.font = '10px "JetBrains Mono", monospace';
