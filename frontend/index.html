@@ -305,13 +305,10 @@ function drawOverlays(){
       obDrawn++;
     }
   }
-  if(!drawOverlays._logged || drawOverlays._lastCount !== overlays.fvg.length + overlays.order_blocks.length){
-    console.debug('[overlay debug] fvg drawn:', fvgDrawn, 'skipped:', fvgSkipped,
-                  '| ob drawn:', obDrawn, 'skipped:', obSkipped,
-                  '| canvas size:', canvas.width, 'x', canvas.height);
-    drawOverlays._logged = true;
-    drawOverlays._lastCount = overlays.fvg.length + overlays.order_blocks.length;
-  }
+  console.log('[overlay debug] fvg drawn:', fvgDrawn, 'skipped:', fvgSkipped,
+              '| ob drawn:', obDrawn, 'skipped:', obSkipped,
+              '| canvas size:', canvas.width, 'x', canvas.height,
+              '| fvg total:', overlays.fvg.length, '| ob total:', overlays.order_blocks.length);
   if(document.getElementById('chk-liq').checked){
     ctx.font = '10px "JetBrains Mono", monospace';
     for(const l of overlays.liquidity){
