@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -26,6 +27,19 @@ ALERT_STAGGER = 2.0  # seconds between checking each symbol, spreads load over t
 # leave unset/empty to alert on every synthetic index (noisy - 30-50+ symbols)
 _raw_symbol_filter = os.getenv("ALERT_SYMBOLS", "").strip()
 ALERT_SYMBOL_FILTER = set(s.strip() for s in _raw_symbol_filter.split(",") if s.strip()) or None
+
+DASHBOARD_URL = os.getenv("DASHBOARD_URL", "https://web-production-e22932.up.railway.app").rstrip("/")
+
+_GRANULARITY_TF_LABELS = {60: "1m", 300: "5m", 900: "15m", 1800: "30m", 3600: "1h", 14400: "4h", 86400: "1d"}
+ALERT_TF_LABEL = _GRANULARITY_TF_LABELS.get(ALERT_GRANULARITY, f"{ALERT_GRANULARITY}s")
+
+
+def _format_time(epoch: int) -> str:
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _chart_link(symbol: str) -> str:
+    return f"{DASHBOARD_URL}/?symbol={symbol}&timeframe={ALERT_TF_LABEL}"
 
 SUBSCRIBERS_FILE = Path(__file__).resolve().parent / "subscribers.json"
 ALERT_STATE_FILE = Path(__file__).resolve().parent / "alert_state.json"
@@ -156,7 +170,12 @@ async def _check_symbol(symbol: str, display_name: str) -> list[str]:
         if first_pass:
             continue
         arrow = "\U0001F7E2" if item["direction"] == "bullish" else "\U0001F534"
-        lines.append(f"{arrow} <b>{item['kind']}</b> ({item['direction']}) <b>{name}</b> @ {item['level']:.4f}")
+        ts = _format_time(item["time"])
+        link = _chart_link(symbol)
+        lines.append(
+            f"{arrow} <b>{item['kind']}</b> ({item['direction']}) <b>{name}</b> @ {item['level']:.4f}\n"
+            f"   {ts} \u00b7 <a href=\"{link}\">open {ALERT_TF_LABEL} chart</a>"
+        )
 
     for item in overlays["liquidity"]:
         if not item.get("swept_time"):
@@ -168,7 +187,12 @@ async def _check_symbol(symbol: str, display_name: str) -> list[str]:
         if first_pass:
             continue
         arrow = "\U0001F7E2" if item["direction"] == "bullish" else "\U0001F534"
-        lines.append(f"\U0001F4A7 Liquidity swept ({item['direction']}) <b>{name}</b> @ {item['level']:.4f}")
+        ts = _format_time(item["swept_time"])
+        link = _chart_link(symbol)
+        lines.append(
+            f"\U0001F4A7 Liquidity swept ({item['direction']}) <b>{name}</b> @ {item['level']:.4f}\n"
+            f"   {ts} \u00b7 <a href=\"{link}\">open {ALERT_TF_LABEL} chart</a>"
+        )
 
     # cap memory growth - only keep the most recent events per symbol
     if len(seen_bc) > 500:

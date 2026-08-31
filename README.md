@@ -70,7 +70,10 @@ time to unsubscribe.
 
 This runs independently of the dashboard itself — you don't need the
 website open to get alerts, and it's not tied to whichever symbol you
-happen to be looking at.
+happen to be looking at. Each alert includes the exact time (UTC) the
+pattern formed and a link that opens the dashboard straight to that symbol
+and timeframe, so you can go look at it immediately instead of hunting for
+it in the dropdown.
 
 ## Worth keeping in mind
 
