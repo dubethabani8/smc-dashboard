@@ -344,8 +344,23 @@ function drawOverlays(){
       ctx.setLineDash([3,3]);
       ctx.beginPath(); ctx.moveTo(x1,yy); ctx.lineTo(x2,yy); ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = 'rgba(242,193,78,0.85)';
-      ctx.fillText(l.swept_time ? 'LQ swept' : 'LQ', x1+3, yy-3);
+      if(l.swept_time){
+        // "x" marker right on the sweep candle - the actual breach point, not the origin
+        ctx.strokeStyle = 'rgba(242,193,78,0.9)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(x2-5, yy-6); ctx.lineTo(x2+5, yy+6);
+        ctx.moveTo(x2+5, yy-6); ctx.lineTo(x2-5, yy+6);
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(242,193,78,0.95)';
+        ctx.fillText('LQ swept', x2+8, yy-6);
+        // faint origin label, kept for context but visually secondary now
+        ctx.fillStyle = 'rgba(242,193,78,0.45)';
+        ctx.fillText('LQ', x1+3, yy-3);
+      } else {
+        ctx.fillStyle = 'rgba(242,193,78,0.85)';
+        ctx.fillText('LQ', x1+3, yy-3);
+      }
     }
   }
 
