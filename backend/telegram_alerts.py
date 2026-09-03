@@ -19,7 +19,7 @@ ALERTS_ENABLED = bool(TELEGRAM_BOT_TOKEN)
 ALERT_GRANULARITY = int(os.getenv("ALERT_GRANULARITY", "900"))  # 15m default
 ALERT_SWING_LENGTH = int(os.getenv("ALERT_SWING_LENGTH", "10"))
 ALERT_RANGE_PERCENT = float(os.getenv("ALERT_RANGE_PERCENT", "0.01"))
-ALERT_POLL_INTERVAL = int(os.getenv("ALERT_POLL_INTERVAL", "900"))  # matches granularity - check once per candle close
+ALERT_POLL_INTERVAL = int(os.getenv("ALERT_POLL_INTERVAL", "300"))  # matches granularity - check once per candle close
 ALERT_HISTORY_COUNT = int(os.getenv("ALERT_HISTORY_COUNT", "300"))
 ALERT_STAGGER = 2.0  # seconds between checking each symbol, spreads load over the poll window
 
