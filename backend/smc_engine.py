@@ -85,46 +85,22 @@ def compute_all(df: pd.DataFrame, swing_length: int = 10, range_percent: float =
             "mitigated_time": _epoch(df, row.get("MitigatedIndex")),
         })
 
-    # --- DEBUG: dump raw liquidity columns once per call, so we can see
-    # exactly what smartmoneyconcepts is putting in the Swept column
-    # before our own code interprets it. Remove once diagnosed.
-    try:
-        non_null_liq = liquidity.dropna(subset=["Liquidity"])
-        log.warning(
-            "LQ_DEBUG df_len=%d df_first_time=%s df_last_time=%s liquidity_rows=%d",
-            len(df),
-            int(df["time"].iloc[0]) if len(df) else None,
-            int(df["time"].iloc[-1]) if len(df) else None,
-            len(non_null_liq),
-        )
-        for i, row in non_null_liq.iterrows():
-            raw_swept = row.get("Swept")
-            raw_end = row.get("End")
-            log.warning(
-                "LQ_DEBUG row_idx=%s level=%.4f direction=%s raw_Swept=%r raw_End=%r "
-                "is_swept_nan=%s is_swept_zero=%s computed_time=%s computed_swept_time=%s",
-                i,
-                float(row["Level"]),
-                "bullish" if row["Liquidity"] == 1 else "bearish",
-                raw_swept,
-                raw_end,
-                pd.isna(raw_swept),
-                (raw_swept == 0) if pd.notna(raw_swept) else False,
-                int(df["time"].iloc[i]),
-                _epoch(df, raw_swept),
-            )
-    except Exception:
-        log.exception("LQ_DEBUG logging failed")
-    # --- END DEBUG
-
     out_liq = []
     for i, row in liquidity.dropna(subset=["Liquidity"]).iterrows():
+        raw_swept = row.get("Swept")
+        # smartmoneyconcepts fills unswept rows with 0 (not NaN). A real sweep
+        # can never land on index 0 anyway - a liquidity level needs
+        # swing_length candles just to be confirmed, so index 0 is always the
+        # "not swept yet" sentinel, never a genuine event. Treat it as None,
+        # same as NaN, so we don't report unswept levels as ancient sweeps.
+        if pd.notna(raw_swept) and int(raw_swept) == 0:
+            raw_swept = None
         out_liq.append({
             "time": int(df["time"].iloc[i]),
             "direction": "bullish" if row["Liquidity"] == 1 else "bearish",
             "level": float(row["Level"]),
             "end_time": _epoch(df, row.get("End")),
-            "swept_time": _epoch(df, row.get("Swept")),
+            "swept_time": _epoch(df, raw_swept),
         })
 
     return {
