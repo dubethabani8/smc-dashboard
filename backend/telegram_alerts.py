@@ -19,9 +19,17 @@ ALERTS_ENABLED = bool(TELEGRAM_BOT_TOKEN)
 ALERT_GRANULARITY = int(os.getenv("ALERT_GRANULARITY", "900"))  # 15m default
 ALERT_SWING_LENGTH = int(os.getenv("ALERT_SWING_LENGTH", "10"))
 ALERT_RANGE_PERCENT = float(os.getenv("ALERT_RANGE_PERCENT", "0.01"))
-ALERT_POLL_INTERVAL = int(os.getenv("ALERT_POLL_INTERVAL", "300"))  # matches granularity - check once per candle close
-ALERT_HISTORY_COUNT = int(os.getenv("ALERT_HISTORY_COUNT", "300"))
+ALERT_POLL_INTERVAL = int(os.getenv("ALERT_POLL_INTERVAL", "300"))
+ALERT_HISTORY_COUNT = int(os.getenv("ALERT_HISTORY_COUNT", "1000"))
 ALERT_STAGGER = 2.0  # seconds between checking each symbol, spreads load over the poll window
+
+# Hard recency cutoff for liquidity-swept alerts, independent of the seen/dedup
+# state. Protects against a class of bug where changing history window size
+# (or any other compute_all() parameter) shifts the derived Swept index for
+# an already-known, already-alerted sweep - making it look "new" to the
+# timestamp-based dedup and firing a stale re-alert. No sweep older than this
+# relative to "now" is ever sent, no matter what the dedup state says.
+ALERT_MAX_AGE_SECONDS = int(os.getenv("ALERT_MAX_AGE_SECONDS", "1800"))  # 30 min default
 
 # comma-separated Deriv symbol codes to restrict alerts to, e.g. "R_100,R_75,BOOM1000"
 # leave unset/empty to alert on every synthetic index (noisy - 30-50+ symbols)
@@ -193,6 +201,17 @@ async def _check_symbol(symbol: str, display_name: str):
             continue
         seen_lq.add(key)
         if first_pass:
+            continue
+        # recency gate: never alert on a sweep older than ALERT_MAX_AGE_SECONDS,
+        # even if it's "new" to the dedup set above (e.g. because a parameter
+        # change like history window size shifted the derived index/timestamp
+        # for an already-known historical sweep)
+        age = time.time() - item["swept_time"]
+        if age > ALERT_MAX_AGE_SECONDS:
+            log.info(
+                "skipping stale liquidity alert for %s: swept_time=%s is %.0fs old (max %ds)",
+                symbol, item["swept_time"], age, ALERT_MAX_AGE_SECONDS,
+            )
             continue
         arrow = "\U0001F7E2" if item["direction"] == "bullish" else "\U0001F534"
         ts = _format_time(item["swept_time"])
