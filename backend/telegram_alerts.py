@@ -184,6 +184,16 @@ async def _check_symbol(symbol: str, display_name: str):
         seen_bc.add(key)
         if first_pass:
             continue
+        # same recency gate as liquidity below - protects against BOS/CHoCH
+        # dedup keys shifting when compute_all() params (e.g. history window
+        # size) change, which can make an old, already-known event look new
+        age = time.time() - item["time"]
+        if age > ALERT_MAX_AGE_SECONDS:
+            log.info(
+                "skipping stale %s alert for %s: time=%s is %.0fs old (max %ds)",
+                item["kind"], symbol, item["time"], age, ALERT_MAX_AGE_SECONDS,
+            )
+            continue
         arrow = "\U0001F7E2" if item["direction"] == "bullish" else "\U0001F534"
         ts = _format_time(item["time"])
         link = _chart_link(symbol, item["kind"], item["direction"], item["level"], item["time"])
