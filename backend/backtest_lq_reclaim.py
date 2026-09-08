@@ -12,9 +12,19 @@ Setup being tested:
      definitions below).
 
 This does NOT place trades or compute PnL - it just measures what actually
-happens after each candidate setup, across a grid of parameter choices, so
-you can see which threshold values produce a real, repeatable edge instead
-of guessing.
+happens after each candidate setup, across a grid of parameter choices,
+compared against a random-candle baseline, so you can see which threshold
+values produce a real, repeatable edge instead of guessing.
+
+Three checks run in sequence (toggle with the DO_* flags below):
+  1. Full-period sweep on SYMBOL - the original grid search.
+  2. Time-split check - same sweep run separately on the first and second
+     half of history, to see if the top parameter zone holds up out of
+     sample rather than being a fluke of one stretch of price action.
+  3. Multi-symbol check - the specific candidate parameter combos (edit
+     CANDIDATE_PARAMS_TO_TRACK below, based on what looked best from step 1)
+     tested across several other symbols, to see if the edge generalizes or
+     was specific to one instrument.
 
 Run this locally or as a one-off Railway job (not part of the live app).
 It needs network access to Deriv, so it won't run in a sandboxed
@@ -38,42 +48,48 @@ import smc_engine
 # CONFIG - edit these to control what gets tested
 # ---------------------------------------------------------------------------
 
-SYMBOL = "R_100"          # Deriv symbol code to test against
+SYMBOL = "R_100"          # Deriv symbol code for the full-period and time-split checks
 TIMEFRAME_SECONDS = 900   # 15m candles
-HISTORY_COUNT = 20000     # how far back to pull - now uses pagination, so this can go much higher than 1000
+HISTORY_COUNT = 20000     # how far back to pull - uses pagination, so this can go well past 1000
 SWING_LENGTH = 10
 RANGE_PERCENT = 0.01
 
-# How close (as a fraction of price) does price need to come to the LQ low
-# level to count as "returned to the level"? e.g. 0.001 = within 0.1% of price.
 CLOSENESS_FRACTIONS = [0.0005, 0.001, 0.002, 0.005]
-
-# How many candles after the "return to level" do we look for a pop-up?
 LOOKAHEAD_CANDLES = [4, 8, 16]
-
-# What counts as a "pop up"? Expressed as a fraction of price move up from
-# the return-candle's low, measured as the best (highest high) reached
-# within the lookahead window. Kept at 0.5%+ - anything smaller is just
-# normal synthetic-index noise, not a meaningful reaction.
 POPUP_FRACTIONS = [0.005, 0.01, 0.015, 0.02]
 
-# How far after the LQ low's origin are we willing to look for the
-# qualifying bullish BOS? (in candles). Keeps things from matching a BOS
-# that's completely unrelated, weeks later.
 MAX_CANDLES_LQ_TO_BOS = 200
-
-# How far after the BOS are we willing to look for the retest/return to the
-# LQ level? (in candles)
 MAX_CANDLES_BOS_TO_RETURN = 200
 
+MIN_SETUPS = 30  # don't trust a hit rate computed from fewer samples than this
+
+DO_FULL_SWEEP = True
+DO_TIME_SPLIT_CHECK = True
+DO_MULTI_SYMBOL_CHECK = True
+
+# Fill these in after looking at the full-period sweep results - the combos
+# that showed the strongest edge there. Format: (closeness_frac, lookahead, popup_frac)
+CANDIDATE_PARAMS_TO_TRACK = [
+    (0.002, 16, 0.02),
+    (0.005, 16, 0.015),
+    (0.002, 16, 0.015),
+]
+
+# Symbols to check the candidate params against. Keep this list modest -
+# each one needs a full paginated fetch.
+SYMBOLS_FOR_MULTI_CHECK = ["R_75", "R_50", "R_25", "CRASH500", "BOOM500"]
+MULTI_SYMBOL_HISTORY_COUNT = 10000  # smaller than the main HISTORY_COUNT to keep total runtime reasonable
+
+
+# ---------------------------------------------------------------------------
+# Baseline (random-candle) comparison
+# ---------------------------------------------------------------------------
 
 def compute_baseline_rates(df: pd.DataFrame, lookaheads: list[int], popup_fractions: list[float]) -> dict:
     """
-    For comparison: what fraction of ALL candles (not tied to any LQ/BOS
-    setup) would "hit" each popup threshold within each lookahead window,
-    just from ordinary price movement? Without this, a high hit rate on the
-    actual setup is meaningless - synthetic indices move constantly, so a
-    setup needs to clearly beat this baseline to be worth anything.
+    What fraction of ALL candles (not tied to any LQ/BOS setup) would "hit"
+    each popup threshold within each lookahead window, from ordinary price
+    movement alone? A setup needs to clearly beat this to mean anything.
     """
     highs = df["high"].to_numpy()
     lows = df["low"].to_numpy()
@@ -114,7 +130,6 @@ def find_candidate_setups(df: pd.DataFrame, overlays: dict) -> list[dict]:
         if lq_idx is None:
             continue
 
-        # find a qualifying bullish BOS shortly after this LQ low formed
         for bos in bull_bos:
             bos_idx = time_to_idx.get(bos["time"])
             if bos_idx is None:
@@ -123,9 +138,6 @@ def find_candidate_setups(df: pd.DataFrame, overlays: dict) -> list[dict]:
             if gap <= 0 or gap > MAX_CANDLES_LQ_TO_BOS:
                 continue
 
-            # find the first candle after the BOS whose low comes back down
-            # near the LQ level - closeness is checked later per threshold,
-            # so here we just record the distance at each candle
             end_idx = min(bos_idx + MAX_CANDLES_BOS_TO_RETURN, len(df) - 1)
             for ret_idx in range(bos_idx + 1, end_idx + 1):
                 low = df["low"].iloc[ret_idx]
@@ -146,9 +158,9 @@ def find_candidate_setups(df: pd.DataFrame, overlays: dict) -> list[dict]:
 def evaluate_outcome(df: pd.DataFrame, candidate: dict, closeness: float,
                       lookahead: int, popup_frac: float) -> dict | None:
     """
-    For a candidate return-to-level event, checks whether it actually
-    qualifies under this closeness threshold, and if so, measures the
-    outcome under this lookahead/popup definition.
+    Checks whether a candidate return-to-level event qualifies under this
+    closeness threshold, and if so, measures the outcome under this
+    lookahead/popup definition.
     """
     if candidate["dist_frac"] > closeness:
         return None
@@ -178,31 +190,32 @@ def evaluate_outcome(df: pd.DataFrame, candidate: dict, closeness: float,
 
 
 # ---------------------------------------------------------------------------
-# Main sweep
+# Reusable sweep - runs the full grid search over one dataframe
 # ---------------------------------------------------------------------------
 
-async def main():
-    print(f"Fetching up to {HISTORY_COUNT} candles for {SYMBOL} @ {TIMEFRAME_SECONDS}s (paginated) ...")
-    candles = await deriv_client.fetch_candle_history_paginated(SYMBOL, TIMEFRAME_SECONDS, HISTORY_COUNT)
-    df = smc_engine.build_dataframe(candles)
-    print(f"Got {len(df)} candles: {df['time'].iloc[0]} -> {df['time'].iloc[-1]}")
+def run_sweep(df: pd.DataFrame, closeness_fractions=None, lookahead_candles=None,
+              popup_fractions=None) -> pd.DataFrame:
+    """
+    Runs the full (closeness, lookahead, popup) grid search against one
+    dataframe and returns a results table with hit_rate, baseline_hit_rate,
+    and edge columns. Uses the module-level CONFIG grids unless overridden -
+    override is used by the multi-symbol check, which only needs a handful
+    of specific combos, not the full grid.
+    """
+    closeness_fractions = closeness_fractions or CLOSENESS_FRACTIONS
+    lookahead_candles = lookahead_candles or LOOKAHEAD_CANDLES
+    popup_fractions = popup_fractions or POPUP_FRACTIONS
 
-    print("Computing overlays (swings, BOS/CHoCH, liquidity) ...")
     overlays = smc_engine.compute_all(df, swing_length=SWING_LENGTH, range_percent=RANGE_PERCENT)
-
-    print("Scanning for candidate setups (LQ low -> bullish BOS -> return) ...")
     candidates = find_candidate_setups(df, overlays)
-    print(f"Found {len(candidates)} raw (lq, bos, return-candle) combinations before thresholding.\n")
-
-    print("Computing baseline (random-candle) hit rates for comparison ...")
-    baseline_rates = compute_baseline_rates(df, LOOKAHEAD_CANDLES, POPUP_FRACTIONS)
+    baseline_rates = compute_baseline_rates(df, lookahead_candles, popup_fractions)
 
     rows = []
     for closeness, lookahead, popup_frac in itertools.product(
-        CLOSENESS_FRACTIONS, LOOKAHEAD_CANDLES, POPUP_FRACTIONS
+        closeness_fractions, lookahead_candles, popup_fractions
     ):
         outcomes = []
-        seen_lq_bos_pairs = set()  # only count the FIRST qualifying return per (lq, bos) pair
+        seen_lq_bos_pairs = set()
         for c in candidates:
             pair_key = (c["lq_time"], c["bos_time"])
             if pair_key in seen_lq_bos_pairs:
@@ -223,9 +236,9 @@ async def main():
         baseline_hit_rate = baseline_rates.get((lookahead, popup_frac), float("nan"))
 
         rows.append({
-            "closeness_pct": closeness * 100,
+            "closeness_pct": round(closeness * 100, 4),
             "lookahead_candles": lookahead,
-            "popup_pct": popup_frac * 100,
+            "popup_pct": round(popup_frac * 100, 4),
             "n_setups": n,
             "hit_rate": round(hit_rate, 3),
             "baseline_hit_rate": round(baseline_hit_rate, 3),
@@ -234,35 +247,167 @@ async def main():
             "avg_drawdown_pct": round(avg_drawdown * 100, 3),
         })
 
-    if not rows:
-        print("No setups matched any parameter combination - try loosening the config values.")
-        return
+    return pd.DataFrame(rows)
 
-    results = pd.DataFrame(rows)
 
-    MIN_SETUPS = 30  # don't trust a hit rate computed from fewer samples than this
-    reliable = results[results["n_setups"] >= MIN_SETUPS].sort_values(
-        ["edge", "n_setups"], ascending=[False, False]
-    )
-    unreliable = results[results["n_setups"] < MIN_SETUPS]
-
+def print_sweep_results(results: pd.DataFrame, label: str, min_setups: int = MIN_SETUPS):
     pd.set_option("display.width", 160)
     pd.set_option("display.max_rows", 100)
 
+    if results.empty:
+        print(f"\n[{label}] No setups matched any parameter combination.")
+        return
+
+    reliable = results[results["n_setups"] >= min_setups].sort_values(
+        ["edge", "n_setups"], ascending=[False, False]
+    )
+    unreliable = results[results["n_setups"] < min_setups]
+
+    print(f"\n=== [{label}] Reliable results (n_setups >= {min_setups}), ranked by edge over baseline ===")
     if not reliable.empty:
-        print(f"\n=== Reliable results (n_setups >= {MIN_SETUPS}), ranked by edge over baseline ===")
         print(reliable.to_string(index=False))
     else:
-        print(f"\nNo parameter combo reached {MIN_SETUPS}+ setups - you likely need more history "
-              f"(raise HISTORY_COUNT) or looser thresholds before trusting any hit rate here.")
+        print(f"None reached {min_setups}+ setups - need more history or looser thresholds here.")
 
     if not unreliable.empty:
-        print(f"\n=== Below the {MIN_SETUPS}-setup trust threshold (shown for reference only) ===")
+        print(f"\n=== [{label}] Below the {min_setups}-setup trust threshold (reference only) ===")
         print(unreliable.sort_values(["edge", "n_setups"], ascending=[False, False]).to_string(index=False))
 
-    out_path = Path(__file__).resolve().parent / f"backtest_lq_reclaim_{SYMBOL}.csv"
-    results.to_csv(out_path, index=False)
-    print(f"\nFull results written to {out_path}")
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+async def fetch_df(symbol: str, history_count: int) -> pd.DataFrame:
+    print(f"Fetching up to {history_count} candles for {symbol} @ {TIMEFRAME_SECONDS}s (paginated) ...")
+    candles = await deriv_client.fetch_candle_history_paginated(symbol, TIMEFRAME_SECONDS, history_count)
+    df = smc_engine.build_dataframe(candles)
+    print(f"Got {len(df)} candles for {symbol}: {df['time'].iloc[0]} -> {df['time'].iloc[-1]}")
+    return df
+
+
+async def main():
+    out_dir = Path(__file__).resolve().parent
+
+    df_full = None
+    if DO_FULL_SWEEP or DO_TIME_SPLIT_CHECK:
+        df_full = await fetch_df(SYMBOL, HISTORY_COUNT)
+
+    # --- 1. Full-period sweep -------------------------------------------------
+    if DO_FULL_SWEEP:
+        print(f"\n########## FULL-PERIOD SWEEP: {SYMBOL} ##########")
+        results_full = run_sweep(df_full)
+        print_sweep_results(results_full, f"{SYMBOL} FULL PERIOD ({len(df_full)} candles)")
+        results_full.to_csv(out_dir / f"backtest_lq_reclaim_{SYMBOL}_full.csv", index=False)
+
+    # --- 2. Time-split check ---------------------------------------------------
+    if DO_TIME_SPLIT_CHECK:
+        print(f"\n########## TIME-SPLIT CHECK: {SYMBOL} ##########")
+        mid = len(df_full) // 2
+        df_first = df_full.iloc[:mid].reset_index(drop=True)
+        df_second = df_full.iloc[mid:].reset_index(drop=True)
+
+        results_first = run_sweep(df_first)
+        results_second = run_sweep(df_second)
+
+        print_sweep_results(
+            results_first,
+            f"{SYMBOL} FIRST HALF ({df_first['time'].iloc[0]} -> {df_first['time'].iloc[-1]})",
+        )
+        print_sweep_results(
+            results_second,
+            f"{SYMBOL} SECOND HALF ({df_second['time'].iloc[0]} -> {df_second['time'].iloc[-1]})",
+        )
+
+        # side-by-side comparison for the tracked candidate combos specifically -
+        # this is the number that actually tells you if the edge is real
+        print(f"\n=== [{SYMBOL}] Candidate params: first half vs second half ===")
+        compare_rows = []
+        for closeness, lookahead, popup in CANDIDATE_PARAMS_TO_TRACK:
+            row1 = results_first[
+                (results_first.closeness_pct.round(4) == round(closeness * 100, 4))
+                & (results_first.lookahead_candles == lookahead)
+                & (results_first.popup_pct.round(4) == round(popup * 100, 4))
+            ]
+            row2 = results_second[
+                (results_second.closeness_pct.round(4) == round(closeness * 100, 4))
+                & (results_second.lookahead_candles == lookahead)
+                & (results_second.popup_pct.round(4) == round(popup * 100, 4))
+            ]
+            compare_rows.append({
+                "closeness_pct": round(closeness * 100, 4),
+                "lookahead": lookahead,
+                "popup_pct": round(popup * 100, 4),
+                "first_half_n": row1["n_setups"].iloc[0] if not row1.empty else 0,
+                "first_half_edge": row1["edge"].iloc[0] if not row1.empty else None,
+                "second_half_n": row2["n_setups"].iloc[0] if not row2.empty else 0,
+                "second_half_edge": row2["edge"].iloc[0] if not row2.empty else None,
+            })
+        compare_df = pd.DataFrame(compare_rows)
+        print(compare_df.to_string(index=False))
+        compare_df.to_csv(out_dir / f"backtest_lq_reclaim_{SYMBOL}_split_comparison.csv", index=False)
+        print(
+            "\nRead this as: if first_half_edge and second_half_edge are both clearly positive and "
+            "similar in size, the pattern likely generalizes across time. If one half is strongly "
+            "positive and the other is near zero or negative, the full-period result was probably "
+            "driven by one stretch of price action, not a repeatable edge."
+        )
+
+    # --- 3. Multi-symbol check --------------------------------------------------
+    if DO_MULTI_SYMBOL_CHECK:
+        print(f"\n########## MULTI-SYMBOL CHECK ##########")
+        closeness_list = sorted({c for c, _, _ in CANDIDATE_PARAMS_TO_TRACK})
+        lookahead_list = sorted({l for _, l, _ in CANDIDATE_PARAMS_TO_TRACK})
+        popup_list = sorted({p for _, _, p in CANDIDATE_PARAMS_TO_TRACK})
+
+        multi_rows = []
+        for sym in SYMBOLS_FOR_MULTI_CHECK:
+            try:
+                sym_df = await fetch_df(sym, MULTI_SYMBOL_HISTORY_COUNT)
+                sym_results = run_sweep(
+                    sym_df,
+                    closeness_fractions=closeness_list,
+                    lookahead_candles=lookahead_list,
+                    popup_fractions=popup_list,
+                )
+            except Exception as exc:
+                print(f"  {sym}: failed ({exc}) - skipping")
+                continue
+
+            for closeness, lookahead, popup in CANDIDATE_PARAMS_TO_TRACK:
+                row = sym_results[
+                    (sym_results.closeness_pct.round(4) == round(closeness * 100, 4))
+                    & (sym_results.lookahead_candles == lookahead)
+                    & (sym_results.popup_pct.round(4) == round(popup * 100, 4))
+                ] if not sym_results.empty else pd.DataFrame()
+                if row.empty:
+                    multi_rows.append({
+                        "symbol": sym, "closeness_pct": round(closeness * 100, 4),
+                        "lookahead": lookahead, "popup_pct": round(popup * 100, 4),
+                        "n_setups": 0, "hit_rate": None, "baseline_hit_rate": None, "edge": None,
+                    })
+                else:
+                    r = row.iloc[0]
+                    multi_rows.append({
+                        "symbol": sym, "closeness_pct": round(closeness * 100, 4),
+                        "lookahead": lookahead, "popup_pct": round(popup * 100, 4),
+                        "n_setups": r["n_setups"], "hit_rate": r["hit_rate"],
+                        "baseline_hit_rate": r["baseline_hit_rate"], "edge": r["edge"],
+                    })
+
+        multi_df = pd.DataFrame(multi_rows)
+        print(f"\n=== Candidate params tested across other symbols ===")
+        if not multi_df.empty:
+            print(multi_df.to_string(index=False))
+            multi_df.to_csv(out_dir / "backtest_lq_reclaim_multi_symbol.csv", index=False)
+            print(
+                "\nRead this as: look for edge staying clearly positive (and n_setups reasonably "
+                "sized) across MOST symbols, for the same parameter combo. A combo that only works "
+                "on one or two symbols is probably fitted to that instrument's specific behavior, "
+                "not a general pattern."
+            )
+        else:
+            print("No results - all symbol fetches failed or produced no setups.")
 
 
 if __name__ == "__main__":
