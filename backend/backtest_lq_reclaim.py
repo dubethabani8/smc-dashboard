@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # so `import deriv_client` etc. work if run from elsewhere
 
@@ -63,6 +65,31 @@ MAX_CANDLES_LQ_TO_BOS = 200
 # How far after the BOS are we willing to look for the retest/return to the
 # LQ level? (in candles)
 MAX_CANDLES_BOS_TO_RETURN = 200
+
+
+def compute_baseline_rates(df: pd.DataFrame, lookaheads: list[int], popup_fractions: list[float]) -> dict:
+    """
+    For comparison: what fraction of ALL candles (not tied to any LQ/BOS
+    setup) would "hit" each popup threshold within each lookahead window,
+    just from ordinary price movement? Without this, a high hit rate on the
+    actual setup is meaningless - synthetic indices move constantly, so a
+    setup needs to clearly beat this baseline to be worth anything.
+    """
+    highs = df["high"].to_numpy()
+    lows = df["low"].to_numpy()
+    n = len(df)
+
+    baseline = {}
+    for lookahead in set(lookaheads):
+        if n <= lookahead:
+            continue
+        windows = sliding_window_view(highs[1:], lookahead)  # windows[k] = highs[k+1 : k+1+lookahead]
+        forward_max = windows.max(axis=1)
+        valid_lows = lows[: len(forward_max)]
+        move_up_frac = (forward_max - valid_lows) / valid_lows
+        for popup in set(popup_fractions):
+            baseline[(lookahead, popup)] = float((move_up_frac >= popup).mean())
+    return baseline
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +194,9 @@ async def main():
     candidates = find_candidate_setups(df, overlays)
     print(f"Found {len(candidates)} raw (lq, bos, return-candle) combinations before thresholding.\n")
 
+    print("Computing baseline (random-candle) hit rates for comparison ...")
+    baseline_rates = compute_baseline_rates(df, LOOKAHEAD_CANDLES, POPUP_FRACTIONS)
+
     rows = []
     for closeness, lookahead, popup_frac in itertools.product(
         CLOSENESS_FRACTIONS, LOOKAHEAD_CANDLES, POPUP_FRACTIONS
@@ -190,6 +220,7 @@ async def main():
         hit_rate = sum(o["hit_popup"] for o in outcomes) / n
         avg_move_up = sum(o["move_up_frac"] for o in outcomes) / n
         avg_drawdown = sum(o["drawdown_frac"] for o in outcomes) / n
+        baseline_hit_rate = baseline_rates.get((lookahead, popup_frac), float("nan"))
 
         rows.append({
             "closeness_pct": closeness * 100,
@@ -197,6 +228,8 @@ async def main():
             "popup_pct": popup_frac * 100,
             "n_setups": n,
             "hit_rate": round(hit_rate, 3),
+            "baseline_hit_rate": round(baseline_hit_rate, 3),
+            "edge": round(hit_rate - baseline_hit_rate, 3),
             "avg_move_up_pct": round(avg_move_up * 100, 3),
             "avg_drawdown_pct": round(avg_drawdown * 100, 3),
         })
@@ -209,15 +242,15 @@ async def main():
 
     MIN_SETUPS = 30  # don't trust a hit rate computed from fewer samples than this
     reliable = results[results["n_setups"] >= MIN_SETUPS].sort_values(
-        ["hit_rate", "n_setups"], ascending=[False, False]
+        ["edge", "n_setups"], ascending=[False, False]
     )
     unreliable = results[results["n_setups"] < MIN_SETUPS]
 
-    pd.set_option("display.width", 140)
+    pd.set_option("display.width", 160)
     pd.set_option("display.max_rows", 100)
 
     if not reliable.empty:
-        print(f"\n=== Reliable results (n_setups >= {MIN_SETUPS}) ===")
+        print(f"\n=== Reliable results (n_setups >= {MIN_SETUPS}), ranked by edge over baseline ===")
         print(reliable.to_string(index=False))
     else:
         print(f"\nNo parameter combo reached {MIN_SETUPS}+ setups - you likely need more history "
@@ -225,7 +258,7 @@ async def main():
 
     if not unreliable.empty:
         print(f"\n=== Below the {MIN_SETUPS}-setup trust threshold (shown for reference only) ===")
-        print(unreliable.sort_values(["hit_rate", "n_setups"], ascending=[False, False]).to_string(index=False))
+        print(unreliable.sort_values(["edge", "n_setups"], ascending=[False, False]).to_string(index=False))
 
     out_path = Path(__file__).resolve().parent / f"backtest_lq_reclaim_{SYMBOL}.csv"
     results.to_csv(out_path, index=False)
