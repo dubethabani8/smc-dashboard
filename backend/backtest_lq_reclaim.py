@@ -38,7 +38,7 @@ import smc_engine
 
 SYMBOL = "R_100"          # Deriv symbol code to test against
 TIMEFRAME_SECONDS = 900   # 15m candles
-HISTORY_COUNT = 5000      # how far back to pull - bigger = more setups found, slower
+HISTORY_COUNT = 20000     # how far back to pull - now uses pagination, so this can go much higher than 1000
 SWING_LENGTH = 10
 RANGE_PERCENT = 0.01
 
@@ -51,8 +51,9 @@ LOOKAHEAD_CANDLES = [4, 8, 16]
 
 # What counts as a "pop up"? Expressed as a fraction of price move up from
 # the return-candle's low, measured as the best (highest high) reached
-# within the lookahead window.
-POPUP_FRACTIONS = [0.001, 0.002, 0.005, 0.01]
+# within the lookahead window. Kept at 0.5%+ - anything smaller is just
+# normal synthetic-index noise, not a meaningful reaction.
+POPUP_FRACTIONS = [0.005, 0.01, 0.015, 0.02]
 
 # How far after the LQ low's origin are we willing to look for the
 # qualifying bullish BOS? (in candles). Keeps things from matching a BOS
@@ -154,8 +155,8 @@ def evaluate_outcome(df: pd.DataFrame, candidate: dict, closeness: float,
 # ---------------------------------------------------------------------------
 
 async def main():
-    print(f"Fetching {HISTORY_COUNT} candles for {SYMBOL} @ {TIMEFRAME_SECONDS}s ...")
-    candles = await deriv_client.fetch_candle_history(SYMBOL, TIMEFRAME_SECONDS, HISTORY_COUNT)
+    print(f"Fetching up to {HISTORY_COUNT} candles for {SYMBOL} @ {TIMEFRAME_SECONDS}s (paginated) ...")
+    candles = await deriv_client.fetch_candle_history_paginated(SYMBOL, TIMEFRAME_SECONDS, HISTORY_COUNT)
     df = smc_engine.build_dataframe(candles)
     print(f"Got {len(df)} candles: {df['time'].iloc[0]} -> {df['time'].iloc[-1]}")
 
@@ -204,10 +205,27 @@ async def main():
         print("No setups matched any parameter combination - try loosening the config values.")
         return
 
-    results = pd.DataFrame(rows).sort_values(["hit_rate", "n_setups"], ascending=[False, False])
+    results = pd.DataFrame(rows)
+
+    MIN_SETUPS = 30  # don't trust a hit rate computed from fewer samples than this
+    reliable = results[results["n_setups"] >= MIN_SETUPS].sort_values(
+        ["hit_rate", "n_setups"], ascending=[False, False]
+    )
+    unreliable = results[results["n_setups"] < MIN_SETUPS]
+
     pd.set_option("display.width", 140)
     pd.set_option("display.max_rows", 100)
-    print(results.to_string(index=False))
+
+    if not reliable.empty:
+        print(f"\n=== Reliable results (n_setups >= {MIN_SETUPS}) ===")
+        print(reliable.to_string(index=False))
+    else:
+        print(f"\nNo parameter combo reached {MIN_SETUPS}+ setups - you likely need more history "
+              f"(raise HISTORY_COUNT) or looser thresholds before trusting any hit rate here.")
+
+    if not unreliable.empty:
+        print(f"\n=== Below the {MIN_SETUPS}-setup trust threshold (shown for reference only) ===")
+        print(unreliable.sort_values(["hit_rate", "n_setups"], ascending=[False, False]).to_string(index=False))
 
     out_path = Path(__file__).resolve().parent / f"backtest_lq_reclaim_{SYMBOL}.csv"
     results.to_csv(out_path, index=False)
