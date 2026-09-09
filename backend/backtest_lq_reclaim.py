@@ -1,34 +1,29 @@
 """
-Backtest: LQ-low reclaim after a bullish BOS.
+Backtest: LQ-low reclaim after a bullish BOS - ATR-normalized version.
 
-Setup being tested:
-  1. A liquidity LOW forms (direction == "bearish" - a level resting below
-     price, built from a swing-low cluster).
-  2. After that, price rallies and prints a bullish BOS (breaks a prior
-     swing high).
-  3. Price pulls back down toward the liquidity low's level, getting within
-     some threshold distance of it (candidate "closeness" values below).
-  4. Shortly after that return, price pops back up (candidate "pop-up"
-     definitions below).
+Same setup as before:
+  1. A liquidity LOW forms (direction == "bearish").
+  2. Price rallies and prints a bullish BOS.
+  3. Price pulls back toward the LQ low's level, within some threshold
+     distance of it.
+  4. Shortly after, price pops back up by some threshold amount.
 
-This does NOT place trades or compute PnL - it just measures what actually
-happens after each candidate setup, across a grid of parameter choices,
-compared against a random-candle baseline, so you can see which threshold
-values produce a real, repeatable edge instead of guessing.
+The difference from the earlier fixed-percentage version: closeness and
+pop-up thresholds are now expressed as MULTIPLES OF ATR (average true
+range) instead of a fixed % of price. A "2x ATR" move is an equally hard
+target on a calm instrument (R_25) as on a volatile one (R_100) - a fixed
+percentage is not, which is why the earlier multi-symbol check made
+low-volatility symbols look like the pattern "failed" there when really the
+targets were just mismatched to that instrument's typical movement.
 
-Three checks run in sequence (toggle with the DO_* flags below):
-  1. Full-period sweep on SYMBOL - the original grid search.
-  2. Time-split check - same sweep run separately on the first and second
-     half of history, to see if the top parameter zone holds up out of
-     sample rather than being a fluke of one stretch of price action.
-  3. Multi-symbol check - the specific candidate parameter combos (edit
-     CANDIDATE_PARAMS_TO_TRACK below, based on what looked best from step 1)
-     tested across several other symbols, to see if the edge generalizes or
-     was specific to one instrument.
+Three checks (toggle with DO_* flags):
+  1. Full-period sweep on SYMBOL.
+  2. Time-split check - same sweep on first vs second half of SYMBOL's
+     history, to catch a pattern that only worked in one stretch of time.
+  3. Multi-symbol check - the tracked candidate ATR-multiple combos tested
+     across other symbols, now on equal footing volatility-wise.
 
-Run this locally or as a one-off Railway job (not part of the live app).
-It needs network access to Deriv, so it won't run in a sandboxed
-environment without that.
+Run this locally or as a one-off job - needs live network access to Deriv.
 """
 import asyncio
 import itertools
@@ -39,58 +34,82 @@ import pandas as pd
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # so `import deriv_client` etc. work if run from elsewhere
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import deriv_client
 import smc_engine
 
 # ---------------------------------------------------------------------------
-# CONFIG - edit these to control what gets tested
+# CONFIG
 # ---------------------------------------------------------------------------
 
-SYMBOL = "R_100"          # Deriv symbol code for the full-period and time-split checks
-TIMEFRAME_SECONDS = 900   # 15m candles
-HISTORY_COUNT = 20000     # how far back to pull - uses pagination, so this can go well past 1000
+SYMBOL = "R_100"
+TIMEFRAME_SECONDS = 900
+HISTORY_COUNT = 20000
 SWING_LENGTH = 10
 RANGE_PERCENT = 0.01
 
-CLOSENESS_FRACTIONS = [0.0005, 0.001, 0.002, 0.005]
+ATR_PERIOD = 14  # standard ATR lookback, in candles
+
+# Closeness/popup are now multiples of the symbol's own typical ATR, not a
+# fixed % of price. e.g. closeness=1.0 means "within one average candle's
+# worth of range" of the LQ level - same relative difficulty on any symbol.
+CLOSENESS_ATR_MULTIPLES = [0.5, 1.0, 1.5, 2.0]
 LOOKAHEAD_CANDLES = [4, 8, 16]
-POPUP_FRACTIONS = [0.005, 0.01, 0.015, 0.02]
+POPUP_ATR_MULTIPLES = [1.0, 2.0, 3.0, 4.0]
 
 MAX_CANDLES_LQ_TO_BOS = 200
 MAX_CANDLES_BOS_TO_RETURN = 200
 
-MIN_SETUPS = 30  # don't trust a hit rate computed from fewer samples than this
+MIN_SETUPS = 30
 
 DO_FULL_SWEEP = True
 DO_TIME_SPLIT_CHECK = True
 DO_MULTI_SYMBOL_CHECK = True
 
-# Fill these in after looking at the full-period sweep results - the combos
-# that showed the strongest edge there. Format: (closeness_frac, lookahead, popup_frac)
+# Fill in after looking at the full-period sweep results - format:
+# (closeness_atr_mult, lookahead, popup_atr_mult). These are placeholders -
+# replace with whatever tops the full sweep's edge column.
 CANDIDATE_PARAMS_TO_TRACK = [
-    (0.002, 16, 0.02),
-    (0.005, 16, 0.015),
-    (0.002, 16, 0.015),
+    (1.0, 16, 3.0),
+    (1.5, 16, 3.0),
+    (1.0, 16, 2.0),
 ]
 
-# Symbols to check the candidate params against. Keep this list modest -
-# each one needs a full paginated fetch.
 SYMBOLS_FOR_MULTI_CHECK = ["R_75", "R_50", "R_25", "CRASH500", "BOOM500"]
-MULTI_SYMBOL_HISTORY_COUNT = 10000  # smaller than the main HISTORY_COUNT to keep total runtime reasonable
+MULTI_SYMBOL_HISTORY_COUNT = 10000
 
 
 # ---------------------------------------------------------------------------
-# Baseline (random-candle) comparison
+# ATR
 # ---------------------------------------------------------------------------
 
-def compute_baseline_rates(df: pd.DataFrame, lookaheads: list[int], popup_fractions: list[float]) -> dict:
-    """
-    What fraction of ALL candles (not tied to any LQ/BOS setup) would "hit"
-    each popup threshold within each lookahead window, from ordinary price
-    movement alone? A setup needs to clearly beat this to mean anything.
-    """
+def compute_atr(df: pd.DataFrame, period: int = ATR_PERIOD) -> pd.Series:
+    high, low, close = df["high"], df["low"], df["close"]
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        (high - low).abs(),
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    return tr.rolling(window=period, min_periods=period).mean()
+
+
+def typical_atr(df: pd.DataFrame, period: int = ATR_PERIOD) -> float:
+    """Single representative ATR value for this dataframe (median of the ATR
+    series), used to convert ATR-multiple thresholds into absolute price
+    distances for this symbol/period."""
+    atr = compute_atr(df, period).dropna()
+    if atr.empty:
+        raise ValueError("not enough candles to compute ATR - need at least ATR_PERIOD+1")
+    return float(atr.median())
+
+
+# ---------------------------------------------------------------------------
+# Baseline (random-candle) comparison, in absolute price terms
+# ---------------------------------------------------------------------------
+
+def compute_baseline_rates_abs(df: pd.DataFrame, lookaheads: list[int], popup_abs_values: list[float]) -> dict:
     highs = df["high"].to_numpy()
     lows = df["low"].to_numpy()
     n = len(df)
@@ -99,26 +118,20 @@ def compute_baseline_rates(df: pd.DataFrame, lookaheads: list[int], popup_fracti
     for lookahead in set(lookaheads):
         if n <= lookahead:
             continue
-        windows = sliding_window_view(highs[1:], lookahead)  # windows[k] = highs[k+1 : k+1+lookahead]
+        windows = sliding_window_view(highs[1:], lookahead)
         forward_max = windows.max(axis=1)
         valid_lows = lows[: len(forward_max)]
-        move_up_frac = (forward_max - valid_lows) / valid_lows
-        for popup in set(popup_fractions):
-            baseline[(lookahead, popup)] = float((move_up_frac >= popup).mean())
+        move_up_abs = forward_max - valid_lows
+        for popup_abs in set(popup_abs_values):
+            baseline[(lookahead, popup_abs)] = float((move_up_abs >= popup_abs).mean())
     return baseline
 
 
 # ---------------------------------------------------------------------------
-# Setup detection
+# Setup detection (distances kept in absolute price units now)
 # ---------------------------------------------------------------------------
 
 def find_candidate_setups(df: pd.DataFrame, overlays: dict) -> list[dict]:
-    """
-    Finds every (lq_low, bullish_bos, return_candle) combination that fits
-    the basic shape of the setup, independent of the closeness/pop-up
-    thresholds (those get applied later, per parameter combo, so we only
-    have to do this scan once).
-    """
     time_to_idx = {t: i for i, t in enumerate(df["time"])}
 
     lq_lows = [item for item in overlays["liquidity"] if item["direction"] == "bearish"]
@@ -141,7 +154,7 @@ def find_candidate_setups(df: pd.DataFrame, overlays: dict) -> list[dict]:
             end_idx = min(bos_idx + MAX_CANDLES_BOS_TO_RETURN, len(df) - 1)
             for ret_idx in range(bos_idx + 1, end_idx + 1):
                 low = df["low"].iloc[ret_idx]
-                dist_frac = abs(low - lq["level"]) / lq["level"]
+                dist_abs = abs(low - lq["level"])  # absolute price distance now, not a fraction
                 candidates.append({
                     "lq_time": lq["time"],
                     "lq_level": lq["level"],
@@ -150,19 +163,14 @@ def find_candidate_setups(df: pd.DataFrame, overlays: dict) -> list[dict]:
                     "return_idx": ret_idx,
                     "return_time": int(df["time"].iloc[ret_idx]),
                     "return_low": low,
-                    "dist_frac": dist_frac,
+                    "dist_abs": dist_abs,
                 })
     return candidates
 
 
-def evaluate_outcome(df: pd.DataFrame, candidate: dict, closeness: float,
-                      lookahead: int, popup_frac: float) -> dict | None:
-    """
-    Checks whether a candidate return-to-level event qualifies under this
-    closeness threshold, and if so, measures the outcome under this
-    lookahead/popup definition.
-    """
-    if candidate["dist_frac"] > closeness:
+def evaluate_outcome_abs(df: pd.DataFrame, candidate: dict, closeness_abs: float,
+                          lookahead: int, popup_abs: float) -> dict | None:
+    if candidate["dist_abs"] > closeness_abs:
         return None
 
     ret_idx = candidate["return_idx"]
@@ -176,51 +184,58 @@ def evaluate_outcome(df: pd.DataFrame, candidate: dict, closeness: float,
         return None
 
     best_high = window["high"].max()
-    move_up_frac = (best_high - entry_price) / entry_price
-    hit_popup = move_up_frac >= popup_frac
+    move_up_abs = best_high - entry_price
+    hit_popup = move_up_abs >= popup_abs
 
     worst_low = window["low"].min()
-    drawdown_frac = (entry_price - worst_low) / entry_price
+    drawdown_abs = entry_price - worst_low
 
     return {
         "hit_popup": hit_popup,
-        "move_up_frac": move_up_frac,
-        "drawdown_frac": drawdown_frac,
+        "move_up_pct": move_up_abs / entry_price * 100,
+        "drawdown_pct": drawdown_abs / entry_price * 100,
     }
 
 
 # ---------------------------------------------------------------------------
-# Reusable sweep - runs the full grid search over one dataframe
+# Reusable sweep
 # ---------------------------------------------------------------------------
 
-def run_sweep(df: pd.DataFrame, closeness_fractions=None, lookahead_candles=None,
-              popup_fractions=None) -> pd.DataFrame:
+def run_sweep_atr(df: pd.DataFrame, closeness_multiples=None, lookahead_candles=None,
+                   popup_multiples=None) -> pd.DataFrame:
     """
-    Runs the full (closeness, lookahead, popup) grid search against one
-    dataframe and returns a results table with hit_rate, baseline_hit_rate,
-    and edge columns. Uses the module-level CONFIG grids unless overridden -
-    override is used by the multi-symbol check, which only needs a handful
-    of specific combos, not the full grid.
+    Runs the (closeness, lookahead, popup) grid search, with closeness and
+    popup expressed as multiples of this dataframe's own typical ATR.
+    Returns a results table including the resolved ATR value used, so it's
+    clear what absolute price distance each multiple corresponds to for
+    this particular symbol/period.
     """
-    closeness_fractions = closeness_fractions or CLOSENESS_FRACTIONS
+    closeness_multiples = closeness_multiples or CLOSENESS_ATR_MULTIPLES
     lookahead_candles = lookahead_candles or LOOKAHEAD_CANDLES
-    popup_fractions = popup_fractions or POPUP_FRACTIONS
+    popup_multiples = popup_multiples or POPUP_ATR_MULTIPLES
+
+    atr_value = typical_atr(df)
 
     overlays = smc_engine.compute_all(df, swing_length=SWING_LENGTH, range_percent=RANGE_PERCENT)
     candidates = find_candidate_setups(df, overlays)
-    baseline_rates = compute_baseline_rates(df, lookahead_candles, popup_fractions)
+
+    popup_abs_values = [m * atr_value for m in popup_multiples]
+    baseline_rates = compute_baseline_rates_abs(df, lookahead_candles, popup_abs_values)
 
     rows = []
-    for closeness, lookahead, popup_frac in itertools.product(
-        closeness_fractions, lookahead_candles, popup_fractions
+    for closeness_mult, lookahead, popup_mult in itertools.product(
+        closeness_multiples, lookahead_candles, popup_multiples
     ):
+        closeness_abs = closeness_mult * atr_value
+        popup_abs = popup_mult * atr_value
+
         outcomes = []
         seen_lq_bos_pairs = set()
         for c in candidates:
             pair_key = (c["lq_time"], c["bos_time"])
             if pair_key in seen_lq_bos_pairs:
                 continue
-            result = evaluate_outcome(df, c, closeness, lookahead, popup_frac)
+            result = evaluate_outcome_abs(df, c, closeness_abs, lookahead, popup_abs)
             if result is None:
                 continue
             seen_lq_bos_pairs.add(pair_key)
@@ -231,27 +246,28 @@ def run_sweep(df: pd.DataFrame, closeness_fractions=None, lookahead_candles=None
 
         n = len(outcomes)
         hit_rate = sum(o["hit_popup"] for o in outcomes) / n
-        avg_move_up = sum(o["move_up_frac"] for o in outcomes) / n
-        avg_drawdown = sum(o["drawdown_frac"] for o in outcomes) / n
-        baseline_hit_rate = baseline_rates.get((lookahead, popup_frac), float("nan"))
+        avg_move_up = sum(o["move_up_pct"] for o in outcomes) / n
+        avg_drawdown = sum(o["drawdown_pct"] for o in outcomes) / n
+        baseline_hit_rate = baseline_rates.get((lookahead, popup_abs), float("nan"))
 
         rows.append({
-            "closeness_pct": round(closeness * 100, 4),
+            "closeness_atr_mult": closeness_mult,
             "lookahead_candles": lookahead,
-            "popup_pct": round(popup_frac * 100, 4),
+            "popup_atr_mult": popup_mult,
+            "atr_value": round(atr_value, 6),
             "n_setups": n,
             "hit_rate": round(hit_rate, 3),
             "baseline_hit_rate": round(baseline_hit_rate, 3),
             "edge": round(hit_rate - baseline_hit_rate, 3),
-            "avg_move_up_pct": round(avg_move_up * 100, 3),
-            "avg_drawdown_pct": round(avg_drawdown * 100, 3),
+            "avg_move_up_pct": round(avg_move_up, 3),
+            "avg_drawdown_pct": round(avg_drawdown, 3),
         })
 
     return pd.DataFrame(rows)
 
 
 def print_sweep_results(results: pd.DataFrame, label: str, min_setups: int = MIN_SETUPS):
-    pd.set_option("display.width", 160)
+    pd.set_option("display.width", 170)
     pd.set_option("display.max_rows", 100)
 
     if results.empty:
@@ -293,22 +309,20 @@ async def main():
     if DO_FULL_SWEEP or DO_TIME_SPLIT_CHECK:
         df_full = await fetch_df(SYMBOL, HISTORY_COUNT)
 
-    # --- 1. Full-period sweep -------------------------------------------------
     if DO_FULL_SWEEP:
-        print(f"\n########## FULL-PERIOD SWEEP: {SYMBOL} ##########")
-        results_full = run_sweep(df_full)
+        print(f"\n########## FULL-PERIOD SWEEP (ATR-normalized): {SYMBOL} ##########")
+        results_full = run_sweep_atr(df_full)
         print_sweep_results(results_full, f"{SYMBOL} FULL PERIOD ({len(df_full)} candles)")
-        results_full.to_csv(out_dir / f"backtest_lq_reclaim_{SYMBOL}_full.csv", index=False)
+        results_full.to_csv(out_dir / f"backtest_lq_reclaim_atr_{SYMBOL}_full.csv", index=False)
 
-    # --- 2. Time-split check ---------------------------------------------------
     if DO_TIME_SPLIT_CHECK:
-        print(f"\n########## TIME-SPLIT CHECK: {SYMBOL} ##########")
+        print(f"\n########## TIME-SPLIT CHECK (ATR-normalized): {SYMBOL} ##########")
         mid = len(df_full) // 2
         df_first = df_full.iloc[:mid].reset_index(drop=True)
         df_second = df_full.iloc[mid:].reset_index(drop=True)
 
-        results_first = run_sweep(df_first)
-        results_second = run_sweep(df_second)
+        results_first = run_sweep_atr(df_first)
+        results_second = run_sweep_atr(df_second)
 
         print_sweep_results(
             results_first,
@@ -319,25 +333,23 @@ async def main():
             f"{SYMBOL} SECOND HALF ({df_second['time'].iloc[0]} -> {df_second['time'].iloc[-1]})",
         )
 
-        # side-by-side comparison for the tracked candidate combos specifically -
-        # this is the number that actually tells you if the edge is real
-        print(f"\n=== [{SYMBOL}] Candidate params: first half vs second half ===")
+        print(f"\n=== [{SYMBOL}] Candidate params (ATR multiples): first half vs second half ===")
         compare_rows = []
-        for closeness, lookahead, popup in CANDIDATE_PARAMS_TO_TRACK:
+        for closeness_mult, lookahead, popup_mult in CANDIDATE_PARAMS_TO_TRACK:
             row1 = results_first[
-                (results_first.closeness_pct.round(4) == round(closeness * 100, 4))
+                (results_first.closeness_atr_mult == closeness_mult)
                 & (results_first.lookahead_candles == lookahead)
-                & (results_first.popup_pct.round(4) == round(popup * 100, 4))
+                & (results_first.popup_atr_mult == popup_mult)
             ]
             row2 = results_second[
-                (results_second.closeness_pct.round(4) == round(closeness * 100, 4))
+                (results_second.closeness_atr_mult == closeness_mult)
                 & (results_second.lookahead_candles == lookahead)
-                & (results_second.popup_pct.round(4) == round(popup * 100, 4))
+                & (results_second.popup_atr_mult == popup_mult)
             ]
             compare_rows.append({
-                "closeness_pct": round(closeness * 100, 4),
+                "closeness_atr_mult": closeness_mult,
                 "lookahead": lookahead,
-                "popup_pct": round(popup * 100, 4),
+                "popup_atr_mult": popup_mult,
                 "first_half_n": row1["n_setups"].iloc[0] if not row1.empty else 0,
                 "first_half_edge": row1["edge"].iloc[0] if not row1.empty else None,
                 "second_half_n": row2["n_setups"].iloc[0] if not row2.empty else 0,
@@ -345,17 +357,10 @@ async def main():
             })
         compare_df = pd.DataFrame(compare_rows)
         print(compare_df.to_string(index=False))
-        compare_df.to_csv(out_dir / f"backtest_lq_reclaim_{SYMBOL}_split_comparison.csv", index=False)
-        print(
-            "\nRead this as: if first_half_edge and second_half_edge are both clearly positive and "
-            "similar in size, the pattern likely generalizes across time. If one half is strongly "
-            "positive and the other is near zero or negative, the full-period result was probably "
-            "driven by one stretch of price action, not a repeatable edge."
-        )
+        compare_df.to_csv(out_dir / f"backtest_lq_reclaim_atr_{SYMBOL}_split_comparison.csv", index=False)
 
-    # --- 3. Multi-symbol check --------------------------------------------------
     if DO_MULTI_SYMBOL_CHECK:
-        print(f"\n########## MULTI-SYMBOL CHECK ##########")
+        print(f"\n########## MULTI-SYMBOL CHECK (ATR-normalized) ##########")
         closeness_list = sorted({c for c, _, _ in CANDIDATE_PARAMS_TO_TRACK})
         lookahead_list = sorted({l for _, l, _ in CANDIDATE_PARAMS_TO_TRACK})
         popup_list = sorted({p for _, _, p in CANDIDATE_PARAMS_TO_TRACK})
@@ -364,48 +369,42 @@ async def main():
         for sym in SYMBOLS_FOR_MULTI_CHECK:
             try:
                 sym_df = await fetch_df(sym, MULTI_SYMBOL_HISTORY_COUNT)
-                sym_results = run_sweep(
+                sym_results = run_sweep_atr(
                     sym_df,
-                    closeness_fractions=closeness_list,
+                    closeness_multiples=closeness_list,
                     lookahead_candles=lookahead_list,
-                    popup_fractions=popup_list,
+                    popup_multiples=popup_list,
                 )
             except Exception as exc:
                 print(f"  {sym}: failed ({exc}) - skipping")
                 continue
 
-            for closeness, lookahead, popup in CANDIDATE_PARAMS_TO_TRACK:
+            for closeness_mult, lookahead, popup_mult in CANDIDATE_PARAMS_TO_TRACK:
                 row = sym_results[
-                    (sym_results.closeness_pct.round(4) == round(closeness * 100, 4))
+                    (sym_results.closeness_atr_mult == closeness_mult)
                     & (sym_results.lookahead_candles == lookahead)
-                    & (sym_results.popup_pct.round(4) == round(popup * 100, 4))
+                    & (sym_results.popup_atr_mult == popup_mult)
                 ] if not sym_results.empty else pd.DataFrame()
                 if row.empty:
                     multi_rows.append({
-                        "symbol": sym, "closeness_pct": round(closeness * 100, 4),
-                        "lookahead": lookahead, "popup_pct": round(popup * 100, 4),
+                        "symbol": sym, "closeness_atr_mult": closeness_mult,
+                        "lookahead": lookahead, "popup_atr_mult": popup_mult,
                         "n_setups": 0, "hit_rate": None, "baseline_hit_rate": None, "edge": None,
                     })
                 else:
                     r = row.iloc[0]
                     multi_rows.append({
-                        "symbol": sym, "closeness_pct": round(closeness * 100, 4),
-                        "lookahead": lookahead, "popup_pct": round(popup * 100, 4),
+                        "symbol": sym, "closeness_atr_mult": closeness_mult,
+                        "lookahead": lookahead, "popup_atr_mult": popup_mult,
                         "n_setups": r["n_setups"], "hit_rate": r["hit_rate"],
                         "baseline_hit_rate": r["baseline_hit_rate"], "edge": r["edge"],
                     })
 
         multi_df = pd.DataFrame(multi_rows)
-        print(f"\n=== Candidate params tested across other symbols ===")
+        print(f"\n=== Candidate params (ATR-normalized) tested across other symbols ===")
         if not multi_df.empty:
             print(multi_df.to_string(index=False))
-            multi_df.to_csv(out_dir / "backtest_lq_reclaim_multi_symbol.csv", index=False)
-            print(
-                "\nRead this as: look for edge staying clearly positive (and n_setups reasonably "
-                "sized) across MOST symbols, for the same parameter combo. A combo that only works "
-                "on one or two symbols is probably fitted to that instrument's specific behavior, "
-                "not a general pattern."
-            )
+            multi_df.to_csv(out_dir / "backtest_lq_reclaim_atr_multi_symbol.csv", index=False)
         else:
             print("No results - all symbol fetches failed or produced no setups.")
 
