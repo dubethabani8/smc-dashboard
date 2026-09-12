@@ -35,7 +35,7 @@ from pathlib import Path
 import pandas as pd
 
 from backtest_lq_reclaim import (
-    fetch_df, typical_atr, find_candidate_setups,
+    fetch_df, typical_atr, compute_atr, find_candidate_setups,
     SWING_LENGTH, RANGE_PERCENT, TIMEFRAME_SECONDS,
 )
 import smc_engine
@@ -51,6 +51,12 @@ HISTORY_COUNT = 20000
 # held up most consistently across the time-split and multi-symbol checks.
 CLOSENESS_ATR_MULT = 1.0
 POPUP_LOOKAHEAD_CANDLES = 16  # kept for reference; the trade sim itself uses MAX_HOLD_CANDLES below
+
+# Minimum candles between LQ origin and the BOS - a liquidity level needs
+# SWING_LENGTH candles just to be confirmed via swing detection. A BOS
+# happening sooner than that means the level wasn't realistically knowable
+# yet in live conditions, even though the batch computation "sees" it.
+MIN_CANDLES_LQ_TO_BOS = SWING_LENGTH
 
 # Trade management parameters
 STOP_ATR_MULT = 1.0              # stop-loss distance below entry
@@ -69,21 +75,27 @@ COST_ATR_MULT_PER_LEG = 0.03
 # Trade simulation
 # ---------------------------------------------------------------------------
 
-def simulate_trade(df: pd.DataFrame, candidate: dict, atr_value: float) -> dict | None:
+def simulate_trade(df: pd.DataFrame, candidate: dict, atr_at_entry: float) -> dict | None:
     """
     Simulates one trade from a candidate return-to-level event, applying
     the closeness filter first (same as the earlier backtest).
+
+    Entry is priced at the return candle's CLOSE, not its low - you can't
+    know a candle's low until after it happens, so deciding to enter once
+    that candle has closed near the LQ level, and filling around its close,
+    is the realistic assumption. atr_at_entry is this candle's own rolling
+    ATR value (backward-looking only), not a global dataset-wide constant.
     """
-    closeness_abs = CLOSENESS_ATR_MULT * atr_value
+    closeness_abs = CLOSENESS_ATR_MULT * atr_at_entry
     if candidate["dist_abs"] > closeness_abs:
         return None
 
     ret_idx = candidate["return_idx"]
-    entry_price = candidate["return_low"]
-    stop_price = entry_price - STOP_ATR_MULT * atr_value
-    target_price = entry_price + PARTIAL_TARGET_ATR_MULT * atr_value
-    breakeven_price = entry_price + BREAKEVEN_BUFFER_ATR_MULT * atr_value
-    cost_frac = (COST_ATR_MULT_PER_LEG * atr_value) / entry_price
+    entry_price = df["close"].iloc[ret_idx]
+    stop_price = entry_price - STOP_ATR_MULT * atr_at_entry
+    target_price = entry_price + PARTIAL_TARGET_ATR_MULT * atr_at_entry
+    breakeven_price = entry_price + BREAKEVEN_BUFFER_ATR_MULT * atr_at_entry
+    cost_frac = (COST_ATR_MULT_PER_LEG * atr_at_entry) / entry_price
 
     end_idx = min(ret_idx + MAX_HOLD_CANDLES, len(df) - 1)
     if end_idx <= ret_idx:
@@ -93,6 +105,10 @@ def simulate_trade(df: pd.DataFrame, candidate: dict, atr_value: float) -> dict 
     current_stop = stop_price
     total_return = 0.0
     outcome = "time_exit_full"  # default if nothing triggers before max hold
+    partial_time = None
+    partial_price = None
+    exit_time = None
+    exit_price = None
 
     for i in range(ret_idx + 1, end_idx + 1):
         low = df["low"].iloc[i]
@@ -100,6 +116,8 @@ def simulate_trade(df: pd.DataFrame, candidate: dict, atr_value: float) -> dict 
 
         # conservative: check stop before target within the same candle
         if low <= current_stop:
+            exit_time = int(df["time"].iloc[i])
+            exit_price = current_stop
             if not partial_taken:
                 leg_return = (current_stop - entry_price) / entry_price - cost_frac
                 total_return = leg_return
@@ -114,12 +132,16 @@ def simulate_trade(df: pd.DataFrame, candidate: dict, atr_value: float) -> dict 
             leg_return = (target_price - entry_price) / entry_price - cost_frac
             total_return += PARTIAL_EXIT_FRACTION * leg_return
             partial_taken = True
+            partial_time = int(df["time"].iloc[i])
+            partial_price = target_price
             current_stop = breakeven_price
             # continue the loop - remainder is still live
 
         if i == end_idx and partial_taken and outcome == "time_exit_full":
             # remainder still open at max hold - close at last close, mark as time exit
             last_close = df["close"].iloc[end_idx]
+            exit_time = int(df["time"].iloc[end_idx])
+            exit_price = last_close
             remainder_return = (last_close - entry_price) / entry_price - cost_frac
             total_return += (1 - PARTIAL_EXIT_FRACTION) * remainder_return
             outcome = "partial_then_time_exit"
@@ -127,35 +149,69 @@ def simulate_trade(df: pd.DataFrame, candidate: dict, atr_value: float) -> dict 
     if outcome == "time_exit_full" and not partial_taken:
         # never hit stop, target, or got a partial - close full position at last close
         last_close = df["close"].iloc[end_idx]
+        exit_time = int(df["time"].iloc[end_idx])
+        exit_price = last_close
         total_return = (last_close - entry_price) / entry_price - cost_frac
 
     return {
         "lq_time": candidate["lq_time"],
+        "lq_level": candidate["lq_level"],
         "bos_time": candidate["bos_time"],
+        "bos_level": candidate["bos_level"],
         "return_time": candidate["return_time"],
+        "entry_time": candidate["return_time"],
         "entry_price": entry_price,
+        "stop_price": stop_price,
+        "target_price": target_price,
+        "breakeven_price": breakeven_price,
+        "partial_time": partial_time,
+        "partial_price": partial_price,
+        "exit_time": exit_time,
+        "exit_price": exit_price,
         "outcome": outcome,
         "return_pct": round(total_return * 100, 4),
     }
 
 
 def run_trade_sim(df: pd.DataFrame, symbol_label: str) -> pd.DataFrame:
-    atr_value = typical_atr(df)
+    atr_series = compute_atr(df)  # rolling, backward-looking only - no future leak
     overlays = smc_engine.compute_all(df, swing_length=SWING_LENGTH, range_percent=RANGE_PERCENT)
     candidates = find_candidate_setups(df, overlays)
+    time_to_idx = {t: i for i, t in enumerate(df["time"])}
 
     trades = []
     seen_lq_bos_pairs = set()
+    skipped_unconfirmed = 0
     for c in candidates:
         pair_key = (c["lq_time"], c["bos_time"])
         if pair_key in seen_lq_bos_pairs:
             continue
-        trade = simulate_trade(df, c, atr_value)
+
+        lq_idx = time_to_idx.get(c["lq_time"])
+        bos_idx = time_to_idx.get(c["bos_time"])
+        if lq_idx is None or bos_idx is None:
+            continue
+        if bos_idx - lq_idx < MIN_CANDLES_LQ_TO_BOS:
+            # BOS happened before the LQ level would have been confirmable
+            # in live conditions - skip, don't trade on foresight
+            skipped_unconfirmed += 1
+            continue
+
+        ret_idx = c["return_idx"]
+        atr_at_entry = atr_series.iloc[ret_idx]
+        if pd.isna(atr_at_entry):
+            continue  # still in ATR warm-up period, not enough history yet
+
+        trade = simulate_trade(df, c, atr_at_entry)
         if trade is None:
             continue
         seen_lq_bos_pairs.add(pair_key)
         trade["symbol"] = symbol_label
         trades.append(trade)
+
+    if skipped_unconfirmed:
+        print(f"  [{symbol_label}] skipped {skipped_unconfirmed} candidate(s) where BOS preceded "
+              f"LQ confirmation (< {MIN_CANDLES_LQ_TO_BOS} candles after LQ origin)")
 
     return pd.DataFrame(trades)
 

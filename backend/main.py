@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 import deriv_client
 import smc_engine
 import telegram_alerts
+import lq_reclaim_alerts
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("smc-dashboard")
@@ -21,10 +22,14 @@ app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
+import lq_reclaim_alerts
+
 @app.on_event("startup")
 async def _start_alert_watcher():
     asyncio.create_task(telegram_alerts.run_alert_watcher())
     asyncio.create_task(telegram_alerts.run_command_listener())
+    asyncio.create_task(lq_reclaim_alerts.run_lq_reclaim_watcher())
+    asyncio.create_task(lq_reclaim_alerts.run_lq_reclaim_command_listener())
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 

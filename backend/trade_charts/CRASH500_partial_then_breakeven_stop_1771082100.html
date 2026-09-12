@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>CRASH500 - partial_then_breakeven_stop (0.2352%)</title>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  body { background: #0d1117; color: #c9d1d9; font-family: -apple-system, Segoe UI, sans-serif; margin: 0; padding: 16px; }
+  h2 { font-size: 16px; margin: 0 0 4px 0; }
+  .meta { font-size: 13px; color: #8b949e; margin-bottom: 12px; }
+  .meta b { color: #c9d1d9; }
+  #chart { width: 100%; height: 480px; }
+  .legend { display: flex; gap: 16px; font-size: 12px; margin-top: 8px; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 4px; }
+  .swatch { width: 10px; height: 10px; display: inline-block; border-radius: 2px; }
+</style>
+</head>
+<body>
+<h2>CRASH500 - partial_then_breakeven_stop (0.2352%)</h2>
+<div class="meta">
+  <b>Outcome:</b> partial_then_breakeven_stop &nbsp;|&nbsp;
+  <b>Return:</b> 0.2352% &nbsp;|&nbsp;
+  <b>Entry:</b> 3052.2770 &nbsp;|&nbsp;
+  <b>Stop:</b> 3045.0609 &nbsp;|&nbsp;
+  <b>Target:</b> 3066.7091
+</div>
+<div id="chart"></div>
+<div class="legend">
+  <span><span class="swatch" style="background:#4caf50"></span> LQ level</span>
+  <span><span class="swatch" style="background:#2196f3"></span> BOS level</span>
+  <span><span class="swatch" style="background:#ffeb3b"></span> Entry</span>
+  <span><span class="swatch" style="background:#f44336"></span> Stop</span>
+  <span><span class="swatch" style="background:#00e676"></span> Target</span>
+  <span><span class="swatch" style="background:#ff9800"></span> Breakeven</span>
+</div>
+
+<script>
+const candles = [{"time": 1771031700, "open": 3073.046, "high": 3073.444, "low": 3065.891, "close": 3066.339}, {"time": 1771032600, "open": 3066.339, "high": 3067.674, "low": 3060.108, "close": 3063.564}, {"time": 1771033500, "open": 3063.574, "high": 3063.926, "low": 3056.964, "close": 3058.698}, {"time": 1771034400, "open": 3058.708, "high": 3064.213, "low": 3058.708, "close": 3064.213}, {"time": 1771035300, "open": 3064.215, "high": 3069.697, "low": 3064.215, "close": 3069.697}, {"time": 1771036200, "open": 3069.702, "high": 3072.21, "low": 3066.348, "close": 3068.38}, {"time": 1771037100, "open": 3068.381, "high": 3071.175, "low": 3068.237, "close": 3070.516}, {"time": 1771038000, "open": 3070.519, "high": 3075.2, "low": 3069.621, "close": 3070.313}, {"time": 1771038900, "open": 3070.316, "high": 3070.471, "low": 3052.674, "close": 3053.655}, {"time": 1771039800, "open": 3053.655, "high": 3057.787, "low": 3053.655, "close": 3057.787}, {"time": 1771040700, "open": 3057.789, "high": 3063.252, "low": 3057.789, "close": 3063.252}, {"time": 1771041600, "open": 3063.253, "high": 3068.416, "low": 3063.253, "close": 3066.135}, {"time": 1771042500, "open": 3066.145, "high": 3068.12, "low": 3064.304, "close": 3067.852}, {"time": 1771043400, "open": 3067.856, "high": 3073.111, "low": 3066.646, "close": 3066.722}, {"time": 1771044300, "open": 3066.727, "high": 3067.045, "low": 3061.829, "close": 3066.386}, {"time": 1771045200, "open": 3066.393, "high": 3071.527, "low": 3066.393, "close": 3069.99}, {"time": 1771046100, "open": 3069.992, "high": 3070.865, "low": 3063.745, "close": 3063.745}, {"time": 1771047000, "open": 3063.749, "high": 3066.631, "low": 3055.893, "close": 3058.503}, {"time": 1771047900, "open": 3058.515, "high": 3060.043, "low": 3056.071, "close": 3059.826}, {"time": 1771048800, "open": 3059.827, "high": 3063.494, "low": 3051.937, "close": 3052.449}, {"time": 1771049700, "open": 3052.45, "high": 3053.356, "low": 3047.477, "close": 3051.997}, {"time": 1771050600, "open": 3052.002, "high": 3055.357, "low": 3051.261, "close": 3053.192}, {"time": 1771051500, "open": 3053.211, "high": 3058.926, "low": 3053.211, "close": 3058.926}, {"time": 1771052400, "open": 3058.936, "high": 3060.893, "low": 3055.237, "close": 3057.956}, {"time": 1771053300, "open": 3057.958, "high": 3061.221, "low": 3054.253, "close": 3056.317}, {"time": 1771054200, "open": 3056.326, "high": 3062.007, "low": 3056.326, "close": 3062.007}, {"time": 1771055100, "open": 3062.025, "high": 3062.73, "low": 3056.114, "close": 3059.749}, {"time": 1771056000, "open": 3059.753, "high": 3060.787, "low": 3054.752, "close": 3055.487}, {"time": 1771056900, "open": 3055.49, "high": 3057.202, "low": 3051.74, "close": 3054.422}, {"time": 1771057800, "open": 3054.435, "high": 3059.118, "low": 3053.913, "close": 3054.829}, {"time": 1771058700, "open": 3054.83, "high": 3060.329, "low": 3054.83, "close": 3060.329}, {"time": 1771059600, "open": 3060.334, "high": 3066.036, "low": 3060.334, "close": 3066.036}, {"time": 1771060500, "open": 3066.048, "high": 3071.042, "low": 3066.048, "close": 3071.042}, {"time": 1771061400, "open": 3071.049, "high": 3076.518, "low": 3071.049, "close": 3076.518}, {"time": 1771062300, "open": 3076.522, "high": 3076.761, "low": 3071.133, "close": 3076.413}, {"time": 1771063200, "open": 3073.287, "high": 3074.927, "low": 3069.151, "close": 3069.291}, {"time": 1771064100, "open": 3069.296, "high": 3070.347, "low": 3063.097, "close": 3064.467}, {"time": 1771065000, "open": 3064.475, "high": 3068.621, "low": 3060.671, "close": 3060.763}, {"time": 1771065900, "open": 3060.769, "high": 3063.027, "low": 3059.549, "close": 3063.027}, {"time": 1771066800, "open": 3063.036, "high": 3068.488, "low": 3063.036, "close": 3068.488}, {"time": 1771067700, "open": 3068.496, "high": 3072.182, "low": 3066.078, "close": 3067.943}, {"time": 1771068600, "open": 3067.948, "high": 3068.621, "low": 3051.068, "close": 3051.998}, {"time": 1771069500, "open": 3052.006, "high": 3052.969, "low": 3049.979, "close": 3052.969}, {"time": 1771070400, "open": 3052.972, "high": 3058.626, "low": 3052.972, "close": 3058.626}, {"time": 1771071300, "open": 3058.63, "high": 3058.748, "low": 3047.715, "close": 3048.547}, {"time": 1771072200, "open": 3048.549, "high": 3054.009, "low": 3048.549, "close": 3054.009}, {"time": 1771073100, "open": 3054.012, "high": 3054.979, "low": 3047.637, "close": 3051.52}, {"time": 1771074000, "open": 3051.525, "high": 3055.801, "low": 3042.889, "close": 3042.982}, {"time": 1771074900, "open": 3042.983, "high": 3048.375, "low": 3042.983, "close": 3048.375}, {"time": 1771075800, "open": 3048.378, "high": 3053.413, "low": 3048.378, "close": 3052.293}, {"time": 1771076700, "open": 3052.304, "high": 3057.717, "low": 3052.304, "close": 3057.717}, {"time": 1771077600, "open": 3057.723, "high": 3061.945, "low": 3055.753, "close": 3056.802}, {"time": 1771078500, "open": 3056.803, "high": 3062.396, "low": 3056.803, "close": 3062.396}, {"time": 1771079400, "open": 3062.399, "high": 3065.329, "low": 3061.731, "close": 3064.228}, {"time": 1771080300, "open": 3064.229, "high": 3065.268, "low": 3054.378, "close": 3054.99}, {"time": 1771081200, "open": 3054.997, "high": 3060.556, "low": 3054.997, "close": 3060.556}, {"time": 1771082100, "open": 3060.566, "high": 3063.168, "low": 3052.244, "close": 3052.277}, {"time": 1771083000, "open": 3052.278, "high": 3054.797, "low": 3051.571, "close": 3054.797}, {"time": 1771083900, "open": 3054.797, "high": 3055.012, "low": 3049.478, "close": 3054.334}, {"time": 1771084800, "open": 3054.354, "high": 3054.855, "low": 3049.648, "close": 3054.219}, {"time": 1771085700, "open": 3054.237, "high": 3058.261, "low": 3054.183, "close": 3058.261}, {"time": 1771086600, "open": 3058.264, "high": 3060.436, "low": 3052.769, "close": 3054.006}, {"time": 1771087500, "open": 3054.009, "high": 3059.506, "low": 3054.009, "close": 3055.201}, {"time": 1771088400, "open": 3055.215, "high": 3060.233, "low": 3055.215, "close": 3060.233}, {"time": 1771089300, "open": 3060.25, "high": 3065.284, "low": 3060.25, "close": 3062.707}, {"time": 1771090200, "open": 3062.717, "high": 3062.92, "low": 3050.326, "close": 3053.885}, {"time": 1771091100, "open": 3053.886, "high": 3059.364, "low": 3053.886, "close": 3059.364}, {"time": 1771092000, "open": 3059.365, "high": 3062.73, "low": 3057.089, "close": 3059.353}, {"time": 1771092900, "open": 3059.355, "high": 3060.877, "low": 3052.71, "close": 3054.562}, {"time": 1771093800, "open": 3054.562, "high": 3060.128, "low": 3054.562, "close": 3060.128}, {"time": 1771094700, "open": 3060.131, "high": 3062.137, "low": 3058.732, "close": 3062.137}, {"time": 1771095600, "open": 3062.147, "high": 3064.931, "low": 3061.887, "close": 3062.242}, {"time": 1771096500, "open": 3062.251, "high": 3063.33, "low": 3056.337, "close": 3060.615}, {"time": 1771097400, "open": 3060.621, "high": 3065.034, "low": 3060.621, "close": 3062.576}, {"time": 1771098300, "open": 3062.58, "high": 3064.514, "low": 3057.985, "close": 3058.999}, {"time": 1771099200, "open": 3059.001, "high": 3062.217, "low": 3058.327, "close": 3058.583}, {"time": 1771100100, "open": 3058.594, "high": 3062.377, "low": 3058.594, "close": 3061.267}, {"time": 1771101000, "open": 3061.277, "high": 3064.98, "low": 3061.277, "close": 3063.441}, {"time": 1771101900, "open": 3063.447, "high": 3066.258, "low": 3055.753, "close": 3056.323}, {"time": 1771102800, "open": 3056.338, "high": 3058.615, "low": 3054.757, "close": 3058.615}, {"time": 1771103700, "open": 3058.622, "high": 3060.453, "low": 3054.239, "close": 3055.011}, {"time": 1771104600, "open": 3055.015, "high": 3057.9, "low": 3055.015, "close": 3057.225}, {"time": 1771105500, "open": 3057.236, "high": 3057.582, "low": 3051.675, "close": 3055.968}, {"time": 1771106400, "open": 3055.975, "high": 3060.738, "low": 3053.544, "close": 3053.846}, {"time": 1771107300, "open": 3053.85, "high": 3057.139, "low": 3051.835, "close": 3053.974}, {"time": 1771108200, "open": 3053.982, "high": 3059.66, "low": 3053.982, "close": 3059.66}, {"time": 1771109100, "open": 3059.661, "high": 3064.497, "low": 3059.661, "close": 3064.497}, {"time": 1771110000, "open": 3064.498, "high": 3069.818, "low": 3064.498, "close": 3069.818}, {"time": 1771110900, "open": 3069.821, "high": 3070.293, "low": 3064.53, "close": 3068.501}, {"time": 1771111800, "open": 3068.508, "high": 3070.072, "low": 3061.446, "close": 3064.732}, {"time": 1771112700, "open": 3064.738, "high": 3065.027, "low": 3055.572, "close": 3059.235}, {"time": 1771113600, "open": 3059.242, "high": 3064.05, "low": 3059.037, "close": 3061.017}, {"time": 1771114500, "open": 3061.026, "high": 3065.893, "low": 3061.026, "close": 3065.893}, {"time": 1771115400, "open": 3065.902, "high": 3068.08, "low": 3063.882, "close": 3065.631}, {"time": 1771116300, "open": 3065.64, "high": 3068.111, "low": 3062.349, "close": 3063.513}, {"time": 1771117200, "open": 3063.519, "high": 3064.521, "low": 3056.718, "close": 3058.383}, {"time": 1771118100, "open": 3058.399, "high": 3062.969, "low": 3058.399, "close": 3060.08}, {"time": 1771119000, "open": 3060.08, "high": 3065.419, "low": 3060.08, "close": 3062.007}, {"time": 1771119900, "open": 3062.011, "high": 3063.516, "low": 3058.211, "close": 3061.814}, {"time": 1771120800, "open": 3061.827, "high": 3066.349, "low": 3060.497, "close": 3061.368}, {"time": 1771121700, "open": 3061.372, "high": 3064.893, "low": 3060.867, "close": 3062.301}, {"time": 1771122600, "open": 3062.304, "high": 3064.67, "low": 3051.542, "close": 3052.404}, {"time": 1771123500, "open": 3052.418, "high": 3057.892, "low": 3052.418, "close": 3057.892}, {"time": 1771124400, "open": 3057.904, "high": 3060.382, "low": 3055.326, "close": 3056.71}, {"time": 1771125300, "open": 3056.71, "high": 3059.03, "low": 3049.263, "close": 3049.49}, {"time": 1771126200, "open": 3049.493, "high": 3052.393, "low": 3047.677, "close": 3048.613}, {"time": 1771127100, "open": 3048.619, "high": 3051.487, "low": 3042.823, "close": 3042.878}, {"time": 1771128000, "open": 3042.879, "high": 3043.749, "low": 3039.197, "close": 3039.942}, {"time": 1771128900, "open": 3039.948, "high": 3045.455, "low": 3039.948, "close": 3045.455}, {"time": 1771129800, "open": 3045.465, "high": 3045.725, "low": 3039.822, "close": 3044.007}, {"time": 1771130700, "open": 3044.009, "high": 3047.545, "low": 3043.579, "close": 3047.545}, {"time": 1771131600, "open": 3047.555, "high": 3051.755, "low": 3047.555, "close": 3051.044}, {"time": 1771132500, "open": 3051.054, "high": 3056.673, "low": 3051.054, "close": 3056.673}, {"time": 1771133400, "open": 3056.678, "high": 3059.22, "low": 3051.456, "close": 3053.979}, {"time": 1771134300, "open": 3053.986, "high": 3054.745, "low": 3048.949, "close": 3051.17}, {"time": 1771135200, "open": 3051.176, "high": 3054.99, "low": 3051.176, "close": 3054.99}, {"time": 1771136100, "open": 3054.992, "high": 3058.282, "low": 3051.78, "close": 3052.153}];
+const trade = {"lq_level": 3045.3095703125, "bos_level": 3065.3291015625, "stop_price": 3045.0609285714286, "target_price": 3066.709142857143, "breakeven_price": 3052.637803571429, "entry_time": 1771082100, "partial_time": 1771110000.0, "exit_time": 1771122600};
+
+const chart = LightweightCharts.createChart(document.getElementById('chart'), {
+  layout: { background: { color: '#0d1117' }, textColor: '#c9d1d9' },
+  grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
+  timeScale: { timeVisible: true, secondsVisible: false },
+});
+
+const candleSeries = chart.addCandlestickSeries({
+  upColor: '#26a69a', downColor: '#ef5350',
+  borderUpColor: '#26a69a', borderDownColor: '#ef5350',
+  wickUpColor: '#26a69a', wickDownColor: '#ef5350',
+});
+candleSeries.setData(candles);
+
+function priceLine(price, color, title) {
+  candleSeries.createPriceLine({
+    price: price, color: color, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed,
+    axisLabelVisible: true, title: title,
+  });
+}
+
+priceLine(trade.lq_level, '#4caf50', 'LQ');
+priceLine(trade.bos_level, '#2196f3', 'BOS');
+priceLine(trade.stop_price, '#f44336', 'Stop');
+priceLine(trade.target_price, '#00e676', 'Target');
+priceLine(trade.breakeven_price, '#ff9800', 'BE');
+
+const markers = [
+  { time: trade.entry_time, position: 'belowBar', color: '#ffeb3b', shape: 'arrowUp', text: 'Entry' },
+];
+if (trade.partial_time) {
+  markers.push({ time: trade.partial_time, position: 'aboveBar', color: '#00e676', shape: 'circle', text: 'Partial' });
+}
+if (trade.exit_time) {
+  markers.push({ time: trade.exit_time, position: 'aboveBar', color: '#f44336', shape: 'arrowDown', text: 'Exit' });
+}
+candleSeries.setMarkers(markers);
+
+chart.timeScale().fitContent();
+</script>
+</body>
+</html>
