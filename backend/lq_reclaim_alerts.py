@@ -77,6 +77,17 @@ MIN_CANDLES_LQ_TO_BOS = SWING_LENGTH
 MAX_HOLD_SECONDS = MAX_HOLD_CANDLES * LQ_RECLAIM_GRANULARITY
 CANDLES_BEFORE_LQ = 15  # context shown before the LQ level in each chart snapshot
 
+# Second layer of protection beyond the exact-lq_time one-per-level rule.
+# In choppy/ranging conditions, two DIFFERENT swing lows minutes apart can
+# represent the same real support shelf - different lq_time, but highly
+# correlated outcomes (confirmed happening live: two R_50 signals 45 min
+# apart, 0.06 price apart). Block a new signal on a symbol if it's too
+# close in both time AND price to a trade still open or recently closed on
+# that same symbol.
+SIGNAL_COOLDOWN_SECONDS = 3 * 3600  # 3 hours
+SIGNAL_COOLDOWN_MIN_ATR_MULT = 3.0  # new LQ level must be at least this many ATRs away to bypass the cooldown
+RECENT_CLOSES_KEEP_COUNT = 20  # per symbol, bounds memory growth
+
 _default_symbols = "R_100,R_75,R_50,R_25,CRASH500,BOOM500"
 _raw_symbol_filter = os.getenv("LQ_RECLAIM_SYMBOLS", _default_symbols).strip()
 LQ_RECLAIM_SYMBOLS = [s.strip() for s in _raw_symbol_filter.split(",") if s.strip()]
@@ -89,6 +100,7 @@ STATE_FILE = Path(__file__).resolve().parent / "lq_reclaim_state.json"
 _used_lq_times: dict[str, set[int]] = {}
 _seen_signals: dict[str, set[tuple[int, int, int]]] = {}
 _open_trades: dict[str, dict[str, dict]] = {}  # symbol -> {entry_time_str: trade_dict}
+_recent_closes: dict[str, list[dict]] = {}  # symbol -> [{"lq_level":, "close_time":}, ...], for the cooldown check
 _warmed_up: set[str] = set()
 
 _subscribers: set[str] = set()
@@ -228,7 +240,7 @@ def _save_subscribers():
 
 
 def _load_state():
-    global _used_lq_times, _seen_signals, _open_trades, _warmed_up
+    global _used_lq_times, _seen_signals, _open_trades, _recent_closes, _warmed_up
     if not STATE_FILE.exists():
         return
     try:
@@ -239,6 +251,7 @@ def _load_state():
             for sym, sigs in data.get("seen_signals", {}).items()
         }
         _open_trades = data.get("open_trades", {})
+        _recent_closes = data.get("recent_closes", {})
         _warmed_up = set(data.get("warmed_up", []))
         n_open = sum(len(v) for v in _open_trades.values())
         log.info("restored lq-reclaim state: %d symbol(s) warmed, %d level(s) used, %d trade(s) open",
@@ -253,6 +266,7 @@ def _save_state():
             "used_lq_times": {sym: sorted(list(s)) for sym, s in _used_lq_times.items()},
             "seen_signals": {sym: [list(t) for t in s] for sym, s in _seen_signals.items()},
             "open_trades": _open_trades,
+            "recent_closes": _recent_closes,
             "warmed_up": sorted(_warmed_up),
         }
         STATE_FILE.write_text(json.dumps(data))
@@ -322,7 +336,7 @@ async def _process_open_trades(symbol: str, df: pd.DataFrame):
                         exit_price, entry_price, atr_at_entry)
                     total_return = partial_leg + remainder_leg
                 await _send_close_message(symbol, trade, outcome, total_return, exit_price, candle_time, df)
-                closed_keys.append(key)
+                closed_keys.append((key, candle_time))
                 break
 
             if not trade["partial_taken"] and high >= trade["target_price"]:
@@ -345,16 +359,23 @@ async def _process_open_trades(symbol: str, df: pd.DataFrame):
                     outcome = "time_exit_full"
                     total_return = _leg_return(exit_price, entry_price, atr_at_entry)
                 await _send_close_message(symbol, trade, outcome, total_return, exit_price, candle_time, df)
-                closed_keys.append(key)
+                closed_keys.append((key, candle_time))
                 break
 
             trade["last_checked_time"] = candle_time
 
-        if key in trades and key not in closed_keys:
+        if key in trades and key not in [k for k, _ in closed_keys]:
             trades[key] = trade  # persist incremental progress (partial/last_checked updates)
 
-    for key in closed_keys:
-        trades.pop(key, None)
+    for key, close_time in closed_keys:
+        closed_trade = trades.pop(key, None)
+        if closed_trade is not None:
+            closes = _recent_closes.setdefault(symbol, [])
+            closes.append({
+                "lq_level": closed_trade["lq_level"],
+                "close_time": close_time,
+            })
+            _recent_closes[symbol] = closes[-RECENT_CLOSES_KEEP_COUNT:]
 
     _open_trades[symbol] = trades
     _save_state()
@@ -454,6 +475,33 @@ async def _check_symbol(symbol: str):
 
         atr_at_entry = atr_series.iloc[ret_idx]
         if pd.isna(atr_at_entry):
+            continue
+
+        # Cooldown: block a signal too close in time AND price to a trade
+        # still open or recently closed on this same symbol - catches
+        # near-duplicate swing lows in choppy conditions that the exact
+        # lq_time match above wouldn't (see comment on SIGNAL_COOLDOWN_*).
+        now_time = c["return_time"]
+        blocked_by_cooldown = False
+        for open_trade in open_trades.values():
+            price_gap = abs(c["lq_level"] - open_trade["lq_level"])
+            if price_gap < SIGNAL_COOLDOWN_MIN_ATR_MULT * atr_at_entry:
+                blocked_by_cooldown = True
+                break
+        if not blocked_by_cooldown:
+            for recent in _recent_closes.get(symbol, []):
+                if now_time - recent["close_time"] > SIGNAL_COOLDOWN_SECONDS:
+                    continue
+                price_gap = abs(c["lq_level"] - recent["lq_level"])
+                if price_gap < SIGNAL_COOLDOWN_MIN_ATR_MULT * atr_at_entry:
+                    blocked_by_cooldown = True
+                    break
+        if blocked_by_cooldown:
+            log.info(
+                "lq-reclaim: skipping signal for %s (lq_level=%.4f) - too close in time/price "
+                "to another open or recently-closed trade on this symbol",
+                symbol, c["lq_level"],
+            )
             continue
 
         closeness_abs = CLOSENESS_ATR_MULT * atr_at_entry
