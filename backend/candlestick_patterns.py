@@ -41,12 +41,20 @@ HAMMER_SHORT_WICK_MAX = 0.35  # the *other* wick must be <= 0.35x the body
 HAMMER_BODY_MAX_PCT = 0.3     # body must be <= 30% of the candle's full range
 MARUBOZU_BODY_MIN_PCT = 0.92  # body >= 92% of range - wicks basically absent
 STAR_BODY_MAX_PCT = 0.2       # candle 2 in a star pattern: genuinely small body, not just smallish
-ENGULF_MARGIN = 1.15          # engulfing body must clear the prior body by 15%, not just barely contain it
+ENGULF_MARGIN = 1.3           # engulfing body must clear the prior body by 30% - a bare-minimum
+                               # engulf is too easy to satisfy on tiny consecutive candles
 THREE_SOLDIERS_WICK_MAX = 0.25 # trailing wick on each soldier/crow <= 25% of its own body
 ATR_PERIOD = 14
-MIN_ATR_MULT = 0.5            # a pattern's defining candle(s) need body >= 50% of recent ATR -
-                               # real intraday data doesn't self-filter the way a random walk does,
-                               # this is the knob to turn first if the chart still feels busy
+MIN_ATR_MULT = 0.5            # floor #1: body >= 50% of recent ATR
+BODY_QUANTILE_LOOKBACK = 20   # floor #2: body must also be a genuinely large candle *for this
+BODY_QUANTILE = 0.75          # stretch of the chart* (>= 75th percentile of the last 20 bodies).
+                               # ATR alone isn't enough on a steady, low-volatility grind (Boom/Crash-
+                               # style indices) where every candle clears a fixed ATR fraction equally -
+                               # this floor only lets through candles that stand out from their own
+                               # recent neighbors, not just from the whole dataset's average noise.
+PATTERN_COOLDOWN = 8          # candles: don't re-flag the *same pattern type* again this soon after
+                               # the last one - stops a repeating micro-pattern (e.g. engulfing on
+                               # every small pullback in a grind) from turning into a solid wall
 
 
 def _atr(df: pd.DataFrame, period: int = ATR_PERIOD) -> pd.Series:
@@ -99,7 +107,8 @@ def detect_all(df: pd.DataFrame, swings: pd.DataFrame) -> list[dict]:
     bullish, bearish = c > o, c < o
     atr = _atr(df)
     bias = _trend_bias(df, swings)
-    min_body = atr * MIN_ATR_MULT
+    body_floor = body.rolling(BODY_QUANTILE_LOOKBACK, min_periods=5).quantile(BODY_QUANTILE)
+    min_body = np.maximum(atr * MIN_ATR_MULT, body_floor.fillna(0))
 
     out: list[dict] = []
 
@@ -108,6 +117,7 @@ def detect_all(df: pd.DataFrame, swings: pd.DataFrame) -> list[dict]:
             if i < min_index:
                 continue
             out.append({
+                "_i": int(i),
                 "time": int(df["time"].iloc[i]),
                 "pattern": pattern,
                 "direction": direction,
@@ -192,5 +202,17 @@ def detect_all(df: pd.DataFrame, swings: pd.DataFrame) -> list[dict]:
         cur = best.get(p["time"])
         if cur is None or _rank[p["pattern"]] < _rank[cur["pattern"]]:
             best[p["time"]] = p
-    out = sorted(best.values(), key=lambda p: p["time"])
+    deduped = sorted(best.values(), key=lambda p: p["_i"])
+
+    # Cooldown pass: a pattern type repeating every candle or two (e.g. engulfing
+    # through a choppy micro-grind) is noise, not a series of distinct signals.
+    last_seen: dict[str, int] = {}
+    out = []
+    for p in deduped:
+        last = last_seen.get(p["pattern"])
+        if last is not None and p["_i"] - last < PATTERN_COOLDOWN:
+            continue
+        last_seen[p["pattern"]] = p["_i"]
+        del p["_i"]
+        out.append(p)
     return out

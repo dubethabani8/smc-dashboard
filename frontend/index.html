@@ -79,6 +79,13 @@
     color:var(--text);padding:10px 14px;border-radius:8px;font-size:12px;max-width:360px;display:none;
   }
 
+  #patternTip{
+    position:absolute;display:none;pointer-events:none;z-index:10;
+    background:var(--panel-2);border:1px solid var(--line);color:var(--text);
+    padding:4px 8px;border-radius:6px;font-size:11px;font-family:'JetBrains Mono',monospace;
+    white-space:nowrap;transform:translate(-50%,-130%);
+  }
+
   #highlightBanner{
     display:none;position:absolute;top:14px;left:50%;transform:translateX(-50%);
     background:var(--panel-2);border:1px solid var(--amber);border-radius:8px;
@@ -153,6 +160,7 @@
       <canvas id="overlayCanvas"></canvas>
       <div id="toast"></div>
       <div id="highlightBanner"></div>
+      <div id="patternTip"></div>
     </div>
     <div id="legend">
       <h4>Overlays</h4>
@@ -268,6 +276,7 @@ if (urlParams.get('event') && urlParams.get('level') && urlParams.get('time')) {
 let currentTF = (presetTF && TIMEFRAMES.includes(presetTF)) ? presetTF : "5m";
 let currentSymbol = null;
 let loadedSymbol = null; // symbol the data currently on screen actually belongs to
+let patternByTime = {}; // time -> pattern info, for the hover tooltip (markers no longer show text)
 let pendingCenterTime = null; // set right before a history reload so we can re-center instead of resetting the zoom
 let overlays = { swings:[], bos_choch:[], fvg:[], order_blocks:[], liquidity:[], patterns:[] };
 let candleTimes = []; // ascending list of known bar times, for extending unmitigated zones
@@ -287,6 +296,25 @@ const chart = LightweightCharts.createChart(chartEl, {
 const candleSeries = chart.addCandlestickSeries({
   upColor:'#3ddc97', downColor:'#ff6b6b', borderVisible:false,
   wickUpColor:'#3ddc97', wickDownColor:'#ff6b6b',
+});
+
+const PATTERN_NAMES = {
+  hammer:'Hammer', hanging_man:'Hanging Man', inverted_hammer:'Inverted Hammer', shooting_star:'Shooting Star',
+  bullish_marubozu:'Bullish Marubozu', bearish_marubozu:'Bearish Marubozu',
+  bullish_engulfing:'Bullish Engulfing', bearish_engulfing:'Bearish Engulfing',
+  piercing_line:'Piercing Line', dark_cloud_cover:'Dark Cloud Cover',
+  morning_star:'Morning Star', evening_star:'Evening Star',
+  three_white_soldiers:'Three White Soldiers', three_black_crows:'Three Black Crows',
+};
+const patternTip = document.getElementById('patternTip');
+chart.subscribeCrosshairMove(param=>{
+  const p = param.time != null ? patternByTime[param.time] : null;
+  if(!p || !param.point){ patternTip.style.display = 'none'; return; }
+  patternTip.textContent = (PATTERN_NAMES[p.pattern] || p.pattern) + ' \u00b7 ' + p.direction;
+  patternTip.style.borderColor = p.direction === 'bullish' ? '#3ddc97' : '#ff6b6b';
+  patternTip.style.left = param.point.x + 'px';
+  patternTip.style.top = param.point.y + 'px';
+  patternTip.style.display = 'block';
 });
 
 function resize(){
@@ -420,13 +448,17 @@ function applyMarkers(){
     }
   }
   if(document.getElementById('chk-patterns').checked){
+    patternByTime = {};
     for(const p of overlays.patterns){
+      patternByTime[p.time] = p;
       markers.push({
         time:p.time, position: p.direction==='bullish'?'belowBar':'aboveBar',
         color: p.direction==='bullish' ? '#3ddc97' : '#ff6b6b',
-        shape:'square', text: p.code
+        shape:'square'
       });
     }
+  } else {
+    patternByTime = {};
   }
   markers.sort((a,b)=>a.time-b.time);
   candleSeries.setMarkers(markers);
