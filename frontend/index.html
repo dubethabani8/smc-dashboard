@@ -161,6 +161,7 @@
       <label class="legend-row"><input type="checkbox" id="chk-fvg" checked><span class="swatch" style="background:var(--bull-fill-strong)"></span>Fair Value Gaps<span class="legend-count" id="cnt-fvg">0</span></label>
       <label class="legend-row"><input type="checkbox" id="chk-ob" checked><span class="swatch" style="background:var(--bear-fill-strong)"></span>Order Blocks<span class="legend-count" id="cnt-ob">0</span></label>
       <label class="legend-row"><input type="checkbox" id="chk-liq" checked><span class="swatch" style="background:var(--amber)"></span>Liquidity<span class="legend-count" id="cnt-liq">0</span></label>
+      <label class="legend-row"><input type="checkbox" id="chk-patterns" checked><span class="swatch" style="background:linear-gradient(90deg,var(--bull) 50%,var(--bear) 50%)"></span>Candle Patterns<span class="legend-count" id="cnt-patterns">0</span></label>
       <div class="sub">
         Bullish = teal, bearish = coral. Faded fill = mitigated/swept.
         Order-block strength uses a synthetic volume proxy (Deriv synthetics have no real order flow).
@@ -266,7 +267,9 @@ if (urlParams.get('event') && urlParams.get('level') && urlParams.get('time')) {
 
 let currentTF = (presetTF && TIMEFRAMES.includes(presetTF)) ? presetTF : "5m";
 let currentSymbol = null;
-let overlays = { swings:[], bos_choch:[], fvg:[], order_blocks:[], liquidity:[] };
+let loadedSymbol = null; // symbol the data currently on screen actually belongs to
+let pendingCenterTime = null; // set right before a history reload so we can re-center instead of resetting the zoom
+let overlays = { swings:[], bos_choch:[], fvg:[], order_blocks:[], liquidity:[], patterns:[] };
 let candleTimes = []; // ascending list of known bar times, for extending unmitigated zones
 let ws = null;
 
@@ -416,6 +419,15 @@ function applyMarkers(){
       });
     }
   }
+  if(document.getElementById('chk-patterns').checked){
+    for(const p of overlays.patterns){
+      markers.push({
+        time:p.time, position: p.direction==='bullish'?'belowBar':'aboveBar',
+        color: p.direction==='bullish' ? '#3ddc97' : '#ff6b6b',
+        shape:'square', text: p.code
+      });
+    }
+  }
   markers.sort((a,b)=>a.time-b.time);
   candleSeries.setMarkers(markers);
 }
@@ -426,9 +438,10 @@ function refreshCounts(){
   document.getElementById('cnt-fvg').textContent = overlays.fvg.length;
   document.getElementById('cnt-ob').textContent = overlays.order_blocks.length;
   document.getElementById('cnt-liq').textContent = overlays.liquidity.length;
+  document.getElementById('cnt-patterns').textContent = overlays.patterns.length;
 }
 
-['chk-swings','chk-bos','chk-fvg','chk-ob','chk-liq'].forEach(id=>{
+['chk-swings','chk-bos','chk-fvg','chk-ob','chk-liq','chk-patterns'].forEach(id=>{
   document.getElementById(id).addEventListener('change', ()=>{ applyMarkers(); drawOverlays(); });
 });
 
@@ -486,11 +499,20 @@ function setStatus(live, text){
   document.getElementById('statusText').textContent = text;
 }
 
+function currentCenterTime(){
+  if(!candleTimes.length) return null;
+  const vr = chart.timeScale().getVisibleLogicalRange();
+  if(!vr) return null;
+  const idx = Math.max(0, Math.min(candleTimes.length - 1, Math.round((vr.from + vr.to) / 2)));
+  return candleTimes[idx];
+}
+
 function subscribeSymbol(){
   currentSymbol = document.getElementById('symbolSelect').value || currentSymbol;
   if(!currentSymbol || !ws || ws.readyState !== WebSocket.OPEN) return;
   const swingLength = parseInt(document.getElementById('swingLength').value || '10', 10);
   const rangePercent = parseFloat(document.getElementById('rangePct').value || '1.0') / 100;
+  pendingCenterTime = (currentSymbol === loadedSymbol) ? currentCenterTime() : null;
   setStatus(false, 'loading ' + currentSymbol + ' · ' + currentTF);
   ws.send(JSON.stringify({ symbol: currentSymbol, timeframe: currentTF, swing_length: swingLength, range_percent: rangePercent }));
 }
@@ -507,13 +529,20 @@ function connectWS(){
       const bars = msg.candles.map(c=>({time:c.epoch, open:+c.open, high:+c.high, low:+c.low, close:+c.close}));
       candleSeries.setData(bars);
       candleTimes = bars.map(b=>b.time);
+      loadedSymbol = currentSymbol;
       overlays = msg.overlays;
       applyMarkers(); refreshCounts(); drawOverlays();
       if(alertHighlight && candleTimes.length){
         focusOnHighlight();
+      } else if(pendingCenterTime != null && candleTimes.length){
+        let idx = candleTimes.findIndex(t => t >= pendingCenterTime);
+        if(idx === -1) idx = candleTimes.length - 1;
+        const pad = 60;
+        chart.timeScale().setVisibleLogicalRange({ from: idx - pad, to: idx + pad });
       } else {
         chart.timeScale().fitContent();
       }
+      pendingCenterTime = null;
       if(bars.length) updateLastPrice(bars[bars.length-1]);
       setStatus(true, currentSymbol + ' · ' + currentTF + ' · live');
     } else if(msg.type === 'candle'){

@@ -12,6 +12,8 @@ import logging
 import pandas as pd
 from smartmoneyconcepts import smc
 
+import candlestick_patterns
+
 log = logging.getLogger("smc-dashboard.engine")
 
 
@@ -43,6 +45,7 @@ def compute_all(df: pd.DataFrame, swing_length: int = 10, range_percent: float =
     fvg = smc.fvg(df, join_consecutive=True)
     ob = smc.ob(df, swings, close_mitigation=False)
     liquidity = smc.liquidity(df, swings, range_percent=range_percent)
+    patterns = candlestick_patterns.detect_all(df, swings)
 
     out_swings = []
     for i, row in swings.dropna(subset=["HighLow"]).iterrows():
@@ -109,4 +112,5 @@ def compute_all(df: pd.DataFrame, swing_length: int = 10, range_percent: float =
         "fvg": out_fvg,
         "order_blocks": out_ob,
         "liquidity": out_liq,
+        "patterns": patterns,
     }
