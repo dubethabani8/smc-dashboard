@@ -55,6 +55,27 @@
   #statusDot.live{background:var(--bull);box-shadow:0 0 8px var(--bull);}
   #lastPrice{font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;}
 
+  #liveBtn{
+    display:none;border:1px solid var(--bull);color:var(--bull);background:transparent;
+    padding:4px 10px;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer;
+    font-family:'JetBrains Mono',monospace;letter-spacing:.03em;
+  }
+  #liveBtn:hover{background:var(--bull);color:#04140c;}
+
+  #ctxMenu{
+    display:none;position:fixed;z-index:50;background:var(--panel-2);border:1px solid var(--line);
+    border-radius:8px;padding:4px;min-width:110px;box-shadow:0 8px 24px rgba(0,0,0,.5);
+    font-family:'JetBrains Mono',monospace;
+  }
+  #ctxMenu .ctx-title{
+    padding:6px 10px 4px;font-size:10px;color:var(--text-dim);border-bottom:1px solid var(--line);
+    margin-bottom:2px;white-space:nowrap;
+  }
+  #ctxMenu .ctx-item{padding:7px 10px;font-size:12px;color:var(--text);border-radius:5px;cursor:pointer;}
+  #ctxMenu .ctx-item:hover{background:var(--bull);color:#04140c;}
+  #ctxMenu .ctx-item.disabled{color:var(--text-dim);cursor:default;opacity:.4;}
+  #ctxMenu .ctx-item.disabled:hover{background:transparent;color:var(--text-dim);}
+
   /* main area */
   #main{flex:1;position:relative;min-height:0;display:flex;}
   #chartWrap{flex:1;position:relative;}
@@ -150,6 +171,7 @@
     <div class="field"><label>Swing</label><input type="number" id="swingLength" value="10" min="2" max="200"></div>
     <div class="field"><label>Liq %</label><input type="number" id="rangePct" value="1.0" min="0.05" max="10" step="0.05"></div>
     <div id="lastPrice">—</div>
+    <button id="liveBtn" title="Resume live streaming">&#9679; Live</button>
     <div id="status"><span id="statusDot"></span><span id="statusText">connecting…</span></div>
     <button id="helpBtn" title="What does this all mean?">?</button>
   </div>
@@ -161,6 +183,7 @@
       <div id="toast"></div>
       <div id="highlightBanner"></div>
       <div id="patternTip"></div>
+      <div id="ctxMenu"></div>
     </div>
     <div id="legend">
       <h4>Overlays</h4>
@@ -264,6 +287,23 @@ const presetTF = urlParams.get('timeframe');
 
 // alert deep-link can also carry the exact event to highlight on load
 let alertHighlight = null;
+let transientFocus = null; // {time, price, direction, until} - brief "you are here" glow after a TF/symbol jump
+let transientFocusRAF = null;
+function startTransientFocus(time, price, direction){
+  transientFocus = { time, price, direction, until: Date.now() + 1800 };
+  if(transientFocusRAF) cancelAnimationFrame(transientFocusRAF);
+  const step = () => {
+    if(!transientFocus || Date.now() >= transientFocus.until){
+      transientFocus = null;
+      transientFocusRAF = null;
+      drawOverlays();
+      return;
+    }
+    drawOverlays();
+    transientFocusRAF = requestAnimationFrame(step);
+  };
+  transientFocusRAF = requestAnimationFrame(step);
+}
 if (urlParams.get('event') && urlParams.get('level') && urlParams.get('time')) {
   alertHighlight = {
     type: urlParams.get('event'),           // 'BOS' | 'CHOCH' | 'LIQUIDITY'
@@ -278,6 +318,7 @@ let currentSymbol = null;
 let loadedSymbol = null; // symbol the data currently on screen actually belongs to
 let patternByTime = {}; // time -> pattern info, for the hover tooltip (markers no longer show text)
 let pendingCenterTime = null; // set right before a history reload so we can re-center instead of resetting the zoom
+let isLiveView = true; // false when viewing a frozen historical snapshot (right-click -> older timeframe jump)
 let overlays = { swings:[], bos_choch:[], fvg:[], order_blocks:[], liquidity:[], patterns:[] };
 let candleTimes = []; // ascending list of known bar times, for extending unmitigated zones
 let ws = null;
@@ -325,6 +366,70 @@ function resize(){
 }
 new ResizeObserver(resize).observe(chartEl);
 chart.timeScale().subscribeVisibleLogicalRangeChange(drawOverlays);
+
+// --- right-click (or long-press on touch) a candle to jump straight to another
+// timeframe, anchored exactly at that candle instead of losing your place ---
+const ctxMenu = document.getElementById('ctxMenu');
+
+function nearestCandleTime(rawTime){
+  if(rawTime == null || !candleTimes.length) return null;
+  let idx = candleTimes.findIndex(t => t >= rawTime);
+  if(idx === -1) idx = candleTimes.length - 1;
+  if(idx > 0 && Math.abs(candleTimes[idx-1]-rawTime) < Math.abs(candleTimes[idx]-rawTime)) idx--;
+  return candleTimes[idx];
+}
+
+function showCtxMenu(clientX, clientY, anchorTime){
+  const dt = new Date(anchorTime*1000).toISOString().slice(0,16).replace('T',' ');
+  ctxMenu.innerHTML = '<div class="ctx-title">' + dt + ' UTC</div>';
+  TIMEFRAMES.forEach(tf=>{
+    const item = document.createElement('div');
+    item.className = 'ctx-item' + (tf===currentTF ? ' disabled' : '');
+    item.textContent = tf;
+    if(tf !== currentTF){
+      item.addEventListener('click', ()=>{
+        currentTF = tf;
+        [...tfGroup.children].forEach(c=>c.classList.toggle('active', c.textContent===tf));
+        hideCtxMenu();
+        subscribeSymbol(anchorTime);
+      });
+    }
+    ctxMenu.appendChild(item);
+  });
+  const menuH = 40 + TIMEFRAMES.length*29;
+  const x = Math.min(clientX, window.innerWidth - 138);
+  const y = Math.min(clientY, window.innerHeight - menuH - 8);
+  ctxMenu.style.left = x + 'px';
+  ctxMenu.style.top = y + 'px';
+  ctxMenu.style.display = 'block';
+}
+function hideCtxMenu(){ ctxMenu.style.display = 'none'; }
+
+chartEl.addEventListener('contextmenu', e=>{
+  e.preventDefault();
+  const rect = chartEl.getBoundingClientRect();
+  const raw = chart.timeScale().coordinateToTime(e.clientX - rect.left);
+  const t = nearestCandleTime(raw);
+  if(t != null) showCtxMenu(e.clientX, e.clientY, t);
+});
+
+let longPressTimer = null;
+chartEl.addEventListener('touchstart', e=>{
+  if(e.touches.length !== 1) return;
+  const touch = e.touches[0];
+  const rect = chartEl.getBoundingClientRect();
+  const x = touch.clientX - rect.left;
+  longPressTimer = setTimeout(()=>{
+    const raw = chart.timeScale().coordinateToTime(x);
+    const t = nearestCandleTime(raw);
+    if(t != null) showCtxMenu(touch.clientX, touch.clientY, t);
+  }, 500);
+}, {passive:true});
+chartEl.addEventListener('touchmove', ()=>clearTimeout(longPressTimer), {passive:true});
+chartEl.addEventListener('touchend', ()=>clearTimeout(longPressTimer), {passive:true});
+
+document.addEventListener('click', e=>{ if(!ctxMenu.contains(e.target)) hideCtxMenu(); });
+document.addEventListener('keydown', e=>{ if(e.key === 'Escape') hideCtxMenu(); });
 
 // draws FVG/OB boxes + liquidity lines on a canvas overlaid on the chart
 function drawOverlays(){
@@ -392,6 +497,30 @@ function drawOverlays(){
         ctx.fillStyle = 'rgba(242,193,78,0.85)';
         ctx.fillText('LQ', x1+3, yy-3);
       }
+    }
+  }
+
+  // transient "you are here" glow after a timeframe/symbol jump - fades out on its own
+  if(transientFocus){
+    const fx = x(transientFocus.time);
+    const fy = y(transientFocus.price);
+    if(fx!=null && fy!=null){
+      const remain = Math.max(0, transientFocus.until - Date.now());
+      const alpha = Math.min(1, remain / 600); // hold briefly, then fade over the last ~0.6s
+      const col = transientFocus.direction==='bullish' ? '61,220,151' : '255,107,107';
+      const pulse = 14 + 6*(1 - remain/1800);
+      ctx.beginPath();
+      ctx.arc(fx, fy, pulse, 0, Math.PI*2);
+      ctx.strokeStyle = `rgba(${col},${0.9*alpha})`;
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(fx, 0); ctx.lineTo(fx, canvas.height);
+      ctx.strokeStyle = `rgba(${col},${0.25*alpha})`;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4,4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
   }
 
@@ -539,15 +668,24 @@ function currentCenterTime(){
   return candleTimes[idx];
 }
 
-function subscribeSymbol(){
+function subscribeSymbol(anchorTime){
   currentSymbol = document.getElementById('symbolSelect').value || currentSymbol;
   if(!currentSymbol || !ws || ws.readyState !== WebSocket.OPEN) return;
   const swingLength = parseInt(document.getElementById('swingLength').value || '10', 10);
   const rangePercent = parseFloat(document.getElementById('rangePct').value || '1.0') / 100;
-  pendingCenterTime = (currentSymbol === loadedSymbol) ? currentCenterTime() : null;
+  pendingCenterTime = (anchorTime != null) ? anchorTime : ((currentSymbol === loadedSymbol) ? currentCenterTime() : null);
   setStatus(false, 'loading ' + currentSymbol + ' · ' + currentTF);
-  ws.send(JSON.stringify({ symbol: currentSymbol, timeframe: currentTF, swing_length: swingLength, range_percent: rangePercent }));
+  const req = { symbol: currentSymbol, timeframe: currentTF, swing_length: swingLength, range_percent: rangePercent };
+  if(anchorTime != null) req.around_time = Math.floor(anchorTime);
+  ws.send(JSON.stringify(req));
 }
+
+function updateLiveButton(){
+  document.getElementById('liveBtn').style.display = isLiveView ? 'none' : 'inline-block';
+}
+document.getElementById('liveBtn').addEventListener('click', ()=>{
+  subscribeSymbol(); // no anchor -> normal most-recent-N fetch, resumes live streaming
+});
 
 function connectWS(){
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -571,12 +709,16 @@ function connectWS(){
         if(idx === -1) idx = candleTimes.length - 1;
         const pad = 60;
         chart.timeScale().setVisibleLogicalRange({ from: idx - pad, to: idx + pad });
+        const b = bars[idx];
+        startTransientFocus(b.time, (b.high+b.low)/2, b.close>=b.open ? 'bullish' : 'bearish');
       } else {
         chart.timeScale().fitContent();
       }
       pendingCenterTime = null;
       if(bars.length) updateLastPrice(bars[bars.length-1]);
-      setStatus(true, currentSymbol + ' · ' + currentTF + ' · live');
+      isLiveView = msg.live !== false;
+      updateLiveButton();
+      setStatus(true, currentSymbol + ' · ' + currentTF + (isLiveView ? ' · live' : ' · ' + new Date(bars.length?bars[bars.length-1].time*1000:Date.now()).toISOString().slice(0,16).replace('T',' ') + ' UTC'));
     } else if(msg.type === 'candle'){
       const c = msg.candle;
       candleSeries.update({time:c.time, open:c.open, high:c.high, low:c.low, close:c.close});
