@@ -391,8 +391,18 @@ function showCtxMenu(clientX, clientY, anchorTime){
     item.textContent = tf;
     if(tf !== currentTF){
       item.addEventListener('click', ()=>{
-        const parentSeconds = TF_SECONDS[currentTF];
-        const range = parentSeconds ? { start: anchorTime, end: anchorTime + parentSeconds } : null;
+        const fromSeconds = TF_SECONDS[currentTF], toSeconds = TF_SECONDS[tf];
+        let range = null;
+        if(fromSeconds && toSeconds){
+          if(toSeconds < fromSeconds){
+            // zooming in: highlight this candle's span - those are its children on the new timeframe
+            range = { start: anchorTime, end: anchorTime + fromSeconds, zoomedIn: true };
+          } else {
+            // zooming out: highlight the bigger candle this one belongs to on the new timeframe
+            const start = Math.floor(anchorTime / toSeconds) * toSeconds;
+            range = { start, end: start + toSeconds, zoomedIn: false };
+          }
+        }
         currentTF = tf;
         [...tfGroup.children].forEach(c=>c.classList.toggle('active', c.textContent===tf));
         hideCtxMenu();
@@ -465,7 +475,7 @@ function drawOverlays(){
       ctx.setLineDash([]);
       ctx.font = 'bold 10px "JetBrains Mono", monospace';
       ctx.fillStyle = 'rgba(242,193,78,0.9)';
-      ctx.fillText('\u2191 zoomed in from here', x1+4, 14);
+      ctx.fillText(highlightRange.zoomedIn===false ? '\u2193 the bigger candle you were on' : '\u2191 zoomed in from here', x1+4, 14);
     }
   }
 
