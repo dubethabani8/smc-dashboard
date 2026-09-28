@@ -314,7 +314,7 @@ if (urlParams.get('event') && urlParams.get('level') && urlParams.get('time')) {
   };
 }
 
-let currentTF = (presetTF && TIMEFRAMES.includes(presetTF)) ? presetTF : "5m";
+let currentTF = (presetTF && TIMEFRAMES.includes(presetTF)) ? presetTF : "15m";
 let currentSymbol = null;
 let loadedSymbol = null; // symbol the data currently on screen actually belongs to
 let patternByTime = {}; // time -> pattern info, for the hover tooltip (markers no longer show text)
@@ -334,7 +334,7 @@ const chart = LightweightCharts.createChart(chartEl, {
   layout:{ background:{color:'transparent'}, textColor:'#7c8797', fontFamily:'JetBrains Mono, monospace', fontSize:11 },
   grid:{ vertLines:{color:'#161e2a'}, horzLines:{color:'#161e2a'} },
   rightPriceScale:{ borderColor:'#212b38' },
-  timeScale:{ borderColor:'#212b38', timeVisible:true, secondsVisible:false },
+  timeScale:{ borderColor:'#212b38', timeVisible:true, secondsVisible:false, rightOffset:8 },
   crosshair:{ mode:LightweightCharts.CrosshairMode.Normal },
 });
 const candleSeries = chart.addCandlestickSeries({
@@ -755,7 +755,7 @@ function connectWS(){
           startTransientFocus(b.time, (b.high+b.low)/2, b.close>=b.open ? 'bullish' : 'bearish');
         }
       } else {
-        chart.timeScale().fitContent();
+        chart.timeScale().setVisibleLogicalRange({ from: candleTimes.length - 110, to: candleTimes.length - 1 });
       }
       pendingCenterTime = null;
       pendingHighlightRange = null;
