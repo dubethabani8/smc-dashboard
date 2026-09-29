@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -62,6 +63,7 @@ async def ws_chart(ws: WebSocket):
             timeframe = init.get("timeframe", "5m")
             swing_length = int(init.get("swing_length", 10))
             range_percent = float(init.get("range_percent", 0.01))
+            around_time = init.get("around_time")  # optional: jump to a specific historical point
             granularity = GRANULARITIES.get(timeframe)
 
             if not symbol or not granularity:
@@ -72,7 +74,7 @@ async def ws_chart(ws: WebSocket):
                 stream_task.cancel()
 
             stream_task = asyncio.create_task(
-                _run_symbol_stream(ws, symbol, granularity, swing_length, range_percent)
+                _run_symbol_stream(ws, symbol, granularity, swing_length, range_percent, around_time)
             )
     except WebSocketDisconnect:
         pass
@@ -81,9 +83,23 @@ async def ws_chart(ws: WebSocket):
             stream_task.cancel()
 
 
-async def _run_symbol_stream(ws: WebSocket, symbol: str, granularity: int, swing_length: int, range_percent: float):
+async def _run_symbol_stream(ws: WebSocket, symbol: str, granularity: int, swing_length: int,
+                              range_percent: float, around_time: int | None = None):
     try:
-        candles = await deriv_client.fetch_candle_history(symbol, granularity, HISTORY_COUNT)
+        # An anchor inside what the "most recent HISTORY_COUNT candles" window already
+        # covers doesn't need special handling - the frontend can find and center on it
+        # itself. Only a genuinely old anchor (e.g. right-click on a candle from weeks
+        # back on a higher timeframe, then drop to a lower one) needs a real historical
+        # fetch, and that fetch must NOT then have live ticks streamed into it: the
+        # streaming loop below only knows how to extend a dataframe that already ends
+        # at "now" - blindly attaching live ticks to an old, disjoint window would just
+        # corrupt it with a time gap in the middle rather than anything useful.
+        now = time.time()
+        live_edge_window = (HISTORY_COUNT // 2) * granularity
+        is_historical = around_time is not None and (now - around_time) > live_edge_window
+        end_time = min(int(around_time) + live_edge_window, int(now)) if is_historical else None
+
+        candles = await deriv_client.fetch_candle_history(symbol, granularity, HISTORY_COUNT, end_time=end_time)
         df = smc_engine.build_dataframe(candles)
         overlays = await asyncio.to_thread(
             smc_engine.compute_all, df, swing_length=swing_length, range_percent=range_percent
@@ -94,7 +110,11 @@ async def _run_symbol_stream(ws: WebSocket, symbol: str, granularity: int, swing
             "symbol": symbol,
             "candles": candles,
             "overlays": overlays,
+            "live": not is_historical,
         })
+
+        if is_historical:
+            return  # frozen snapshot - frontend shows a "Live" button to resume streaming
 
         last_sent = 0.0
         async for candle in deriv_client.stream_candles(symbol, granularity):

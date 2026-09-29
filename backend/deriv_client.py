@@ -78,18 +78,22 @@ async def _fetch_synthetic_indices() -> list[dict]:
         return synth
 
 
-async def fetch_candle_history(symbol: str, granularity: int, count: int = 1000) -> list[dict]:
-    """One-shot fetch of the most recent `count` candles. Retries on transient network errors."""
-    return await _with_retry(_fetch_candle_history, symbol, granularity, count)
+async def fetch_candle_history(symbol: str, granularity: int, count: int = 1000, end_time: int | None = None) -> list[dict]:
+    """
+    One-shot fetch of `count` candles ending at `end_time` (unix seconds), or the
+    most recent `count` candles if `end_time` is omitted. Retries on transient
+    network errors.
+    """
+    return await _with_retry(_fetch_candle_history, symbol, granularity, count, end_time)
 
 
-async def _fetch_candle_history(symbol: str, granularity: int, count: int) -> list[dict]:
+async def _fetch_candle_history(symbol: str, granularity: int, count: int, end_time: int | None = None) -> list[dict]:
     async with _connect() as ws:
         req = {
             "ticks_history": symbol,
             "adjust_start_time": 1,
             "count": count,
-            "end": "latest",
+            "end": end_time if end_time is not None else "latest",
             "start": 1,
             "style": "candles",
             "granularity": granularity,
