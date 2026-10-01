@@ -314,7 +314,7 @@ if (urlParams.get('event') && urlParams.get('level') && urlParams.get('time')) {
   };
 }
 
-let currentTF = (presetTF && TIMEFRAMES.includes(presetTF)) ? presetTF : "5m";
+let currentTF = (presetTF && TIMEFRAMES.includes(presetTF)) ? presetTF : "15m";
 let currentSymbol = null;
 let loadedSymbol = null; // symbol the data currently on screen actually belongs to
 let patternByTime = {}; // time -> pattern info, for the hover tooltip (markers no longer show text)
@@ -334,7 +334,7 @@ const chart = LightweightCharts.createChart(chartEl, {
   layout:{ background:{color:'transparent'}, textColor:'#7c8797', fontFamily:'JetBrains Mono, monospace', fontSize:11 },
   grid:{ vertLines:{color:'#161e2a'}, horzLines:{color:'#161e2a'} },
   rightPriceScale:{ borderColor:'#212b38' },
-  timeScale:{ borderColor:'#212b38', timeVisible:true, secondsVisible:false },
+  timeScale:{ borderColor:'#212b38', timeVisible:true, secondsVisible:false, rightOffset:8 },
   crosshair:{ mode:LightweightCharts.CrosshairMode.Normal },
 });
 const candleSeries = chart.addCandlestickSeries({
@@ -707,12 +707,16 @@ function currentCenterTime(){
   return candleTimes[idx];
 }
 
-function subscribeSymbol(anchorTime, parentRange){
+function subscribeSymbol(anchorTime, parentRange, goLive){
   currentSymbol = document.getElementById('symbolSelect').value || currentSymbol;
   if(!currentSymbol || !ws || ws.readyState !== WebSocket.OPEN) return;
   const swingLength = parseInt(document.getElementById('swingLength').value || '10', 10);
   const rangePercent = parseFloat(document.getElementById('rangePct').value || '1.0') / 100;
-  pendingCenterTime = (anchorTime != null) ? anchorTime : ((currentSymbol === loadedSymbol) ? currentCenterTime() : null);
+  // goLive explicitly means "jump to the live edge" - must NOT fall through to preserving
+  // wherever the view happened to be sitting (that's what caused the "Live" button to land
+  // on a stale spot instead of actually-current data: the fetch was fresh, but the view got
+  // re-centered on the old frozen-snapshot scroll position instead of the new live edge).
+  pendingCenterTime = goLive ? null : (anchorTime != null) ? anchorTime : ((currentSymbol === loadedSymbol) ? currentCenterTime() : null);
   pendingHighlightRange = parentRange || null;
   setStatus(false, 'loading ' + currentSymbol + ' · ' + currentTF);
   const req = { symbol: currentSymbol, timeframe: currentTF, swing_length: swingLength, range_percent: rangePercent };
@@ -724,7 +728,7 @@ function updateLiveButton(){
   document.getElementById('liveBtn').style.display = isLiveView ? 'none' : 'inline-block';
 }
 document.getElementById('liveBtn').addEventListener('click', ()=>{
-  subscribeSymbol(); // no anchor -> normal most-recent-N fetch, resumes live streaming
+  subscribeSymbol(undefined, undefined, true); // goLive=true -> jump to the actual live edge, not wherever we were scrolled to
 });
 
 function connectWS(){
@@ -755,7 +759,7 @@ function connectWS(){
           startTransientFocus(b.time, (b.high+b.low)/2, b.close>=b.open ? 'bullish' : 'bearish');
         }
       } else {
-        chart.timeScale().fitContent();
+        chart.timeScale().setVisibleLogicalRange({ from: candleTimes.length - 110, to: candleTimes.length - 1 });
       }
       pendingCenterTime = null;
       pendingHighlightRange = null;
