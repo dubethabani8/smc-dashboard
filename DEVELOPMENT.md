@@ -33,12 +33,23 @@ Set it as `DERIV_APP_ID`. Only ever calls the no-auth market data endpoints
 ## Running locally
 
 ```bash
-cd backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 export DERIV_APP_ID=your_app_id_here
-uvicorn main:app --reload --port 8000
+cd backend
+uvicorn main:app --reload --port 8000 --reload-exclude ".venv/*"
 ```
+
+(On Windows PowerShell, the last line needs `--% ` before `--reload-exclude` to stop
+PowerShell expanding the glob itself: `uvicorn main:app --reload --port 8000 --% --reload-exclude ".venv/*"`.
+If `uvicorn.exe` gets blocked by local security policy, run it as
+`python -m uvicorn ...` instead - same arguments, just invoked through the
+already-trusted Python interpreter rather than the separate launcher binary.)
+
+`--reload-exclude ".venv/*"` matters: without it, a `pip install` that
+touches package files right before starting the server can trigger a long
+cascade of spurious reloads as the file-watcher catches up, which drops the
+websocket repeatedly during that window.
 
 localhost:8000 should show the symbol list and start streaming within a
 couple seconds.
@@ -155,3 +166,56 @@ Env vars:
   alerts on new BOS/CHoCH or liquidity sweeps, multi-symbol watchlist, or
   (bigger undertaking) wiring in actual order placement - that last one
   would need real risk controls built in first, not something to rush.
+- **Confirmed and currently unfixed:** the redeploy-wipes-dedup-state gap
+  above has gone from theoretical to real - active development this cycle
+  meant many redeploys in a short window, and alerts visibly double-fired
+  for a stretch as a result. The fix is a Railway volume (persistent disk)
+  for `subscribers.json`/`alert_state.json` instead of container-local
+  files. Needs a Railway-side step (add + mount a volume) before the code
+  change to point at it.
+
+## Added this cycle (candlestick patterns + smarter chart navigation)
+
+- **`backend/candlestick_patterns.py`** - standard pattern detection
+  (engulfing, hammer/hanging-man/shooting-star/inverted-hammer with trend
+  context from the existing swing structure, marubozu, piercing/dark-cloud,
+  morning/evening star, three-soldiers/crows). Wired into
+  `smc_engine.compute_all()` as a new `patterns` key. Thresholds are an
+  adaptive floor (ATR *and* a rolling-quantile-vs-recent-neighbors check,
+  not ATR alone - a pure ATR cutoff doesn't filter anything on a smooth,
+  low-variance grind like Boom/Crash indices between spikes) plus an
+  8-candle cooldown per pattern type so a repeating micro-pattern doesn't
+  turn into a wall of markers. Frontend renders them as small colored
+  squares with no inline text (a hover tooltip shows the name instead) -
+  text labels on a few hundred pattern hits does not scale visually the way
+  "BOS"/"CHoCH" text does at a few dozen hits.
+- **Chart no longer loses your position** on a timeframe switch, symbol
+  switch (same-symbol only - a genuinely different symbol correctly still
+  lands at the live edge, not wherever the old symbol's view happened to
+  be), or an automatic websocket reconnect.
+- **Right-click (long-press on touch) a candle** to jump straight to
+  another timeframe, anchored at that exact candle. Shows a menu with the
+  candle's UTC time and every other timeframe. Zooming in shades the exact
+  lower-timeframe candles that make up the one you clicked; zooming out
+  shades the bigger candle it belongs to. Stays until you click the chart
+  or navigate again.
+- **Jumping to an old candle on a lower timeframe** does a real historical
+  fetch (`deriv_client.fetch_candle_history` now takes an optional
+  `end_time`) instead of just "most recent N", and deliberately does **not**
+  attach live streaming to that frozen window - a live tick landing on data
+  that ends weeks in the past would just corrupt it with a time gap, not
+  extend it usefully. A **"● Live"** button appears whenever viewing one of
+  these snapshots; clicking it explicitly jumps to the real live edge
+  (`goLive` flag on `subscribeSymbol()` - this has to bypass the normal
+  position-preserving logic entirely, not just omit the anchor, or it lands
+  back on wherever the snapshot happened to be scrolled to instead of
+  "now").
+- Default timeframe on a fresh load is 15m (was 5m); a fresh load shows the
+  most recent ~110 candles with the live edge visible (was zoomed out to
+  fit all ~1000 loaded candles) and a loading spinner instead of a blank
+  canvas while the first fetch is in flight.
+- **Not yet done, next up for this area:** price-touch alerts and drawing
+  tools are on the roadmap but intentionally not started - bigger pieces
+  that want a proper scoping conversation first (persistence model for
+  drawings, how a price-alert rule should be defined and evaluated) rather
+  than building on assumptions.

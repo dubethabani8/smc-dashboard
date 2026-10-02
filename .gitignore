@@ -6,3 +6,8 @@ venv/
 .DS_Store
 backend/subscribers.json
 backend/alert_state.json
+
+# backtest/sweep run artifacts (local analysis outputs, not source)
+backend/*.csv
+backend/*.log
+backend/liquidity_sweep_bot/

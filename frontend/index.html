@@ -82,6 +82,20 @@
   #chart{width:100%;height:100%;}
   #overlayCanvas{position:absolute;top:0;left:0;pointer-events:none;z-index:5;}
 
+  #loadingVeil{
+    position:absolute;inset:0;z-index:20;background:var(--bg);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+    transition:opacity .25s ease;
+  }
+  #loadingVeil.hidden{opacity:0;pointer-events:none;}
+  #loadingVeil .spinner{
+    width:28px;height:28px;border-radius:50%;
+    border:3px solid var(--line);border-top-color:var(--bull);
+    animation:veil-spin .8s linear infinite;
+  }
+  #loadingVeil span{color:var(--text-dim);font-size:13px;font-family:'JetBrains Mono',monospace;}
+  @keyframes veil-spin{to{transform:rotate(360deg);}}
+
   /* legend sidebar */
   #legend{
     width:190px;background:var(--panel);border-left:1px solid var(--line);
@@ -179,6 +193,7 @@
   <div id="main">
     <div id="chartWrap">
       <div id="chart"></div>
+      <div id="loadingVeil"><div class="spinner"></div><span>Loading chart…</span></div>
       <canvas id="overlayCanvas"></canvas>
       <div id="toast"></div>
       <div id="highlightBanner"></div>
@@ -740,6 +755,7 @@ function connectWS(){
   ws.onmessage = (ev)=>{
     const msg = JSON.parse(ev.data);
     if(msg.type === 'history'){
+      document.getElementById('loadingVeil').classList.add('hidden');
       const bars = msg.candles.map(c=>({time:c.epoch, open:+c.open, high:+c.high, low:+c.low, close:+c.close}));
       candleSeries.setData(bars);
       candleTimes = bars.map(b=>b.time);
